@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 
 def portfolio_returns(returns, weights):
+    if returns is None or len(returns) == 0:
+        return pd.Series(dtype=float)
 
     weights = np.array(weights)
 
@@ -36,6 +38,13 @@ def sharpe_ratio(returns, interval="1d", risk_free_rate=0.02):
     }
     periods = periods_per_year.get(interval, 252)
     
+    if isinstance(returns, pd.DataFrame):
+        returns = returns.stack()
+
+    returns = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if returns.empty:
+        return 0.0
+
     excess_return = returns.mean() - (risk_free_rate / periods)
     std_dev = returns.std()
     
@@ -60,19 +69,28 @@ def max_drawdown(price):
     float
         Maximum drawdown as percentage.
     """
-    if price.empty or price.isna().all():
+    if price is None or len(price) == 0:
         return 0.0
+
+    price = pd.to_numeric(price, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+
+    if price.empty:
+        return 0.0
+
+    # Accept either an equity/price series or a return series for resilience.
+    if (price < 0).any():
+        price = (1 + price).cumprod()
     
     rolling_max = price.cummax()
     
     # Avoid division by zero
     with np.errstate(divide='ignore', invalid='ignore'):
-        drawdown = price / rolling_max - 1
+        drawdown = price / rolling_max.replace(0, np.nan) - 1
     
     # Handle any remaining NaN or inf values
     drawdown = drawdown.replace([np.inf, -np.inf], np.nan).fillna(0)
     
-    return drawdown.min()
+    return drawdown.min() * 100
 
 
 def win_rate(daily_returns):
@@ -89,6 +107,10 @@ def win_rate(daily_returns):
     float
         Win rate as percentage (0-100).
     """
+    if isinstance(daily_returns, pd.DataFrame):
+        daily_returns = daily_returns.stack()
+
+    daily_returns = pd.to_numeric(daily_returns, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
     profitable_days = (daily_returns > 0).sum()
     total_days = (daily_returns != 0).sum()
     
@@ -190,14 +212,20 @@ def value_at_risk(returns, confidence=0.95):
     """Compute historical Value at Risk (VaR)."""
     if isinstance(returns, pd.DataFrame):
         returns = returns.stack()
-    return -np.percentile(returns.dropna(), 100 * (1 - confidence))
+    returns = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if returns.empty:
+        return 0.0
+    return -np.percentile(returns, 100 * (1 - confidence))
 
 
 def conditional_value_at_risk(returns, confidence=0.95):
     """Compute Conditional Value at Risk (CVaR)."""
     if isinstance(returns, pd.DataFrame):
         returns = returns.stack()
-    tail = returns[returns <= np.percentile(returns.dropna(), 100 * (1 - confidence))]
+    returns = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if returns.empty:
+        return 0.0
+    tail = returns[returns <= np.percentile(returns, 100 * (1 - confidence))]
     if len(tail) > 0:
         return -tail.mean()
     else:

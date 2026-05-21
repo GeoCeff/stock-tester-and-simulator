@@ -75,97 +75,83 @@ class Strategy(ABC):
             if not isinstance(signals, pd.Series) or not isinstance(close, pd.Series):
                 raise ValueError("Signals and close must be pandas Series")
 
-            if len(signals) != len(close):
-                raise ValueError("Signals and close series must have same length")
-
             if len(signals) == 0:
                 raise ValueError("Empty data provided")
 
             if initial_equity <= 0:
                 raise ValueError("Initial equity must be positive")
 
-            df = pd.DataFrame({
-                'close': close,
-                'signal': signals
-            })
+            if self.holding_period < 0:
+                raise ValueError("Holding period cannot be negative")
 
-            # Track position entry date (to enforce holding period)
-            entry_dates = pd.Series(0, index=df.index, dtype=int)
-            position = pd.Series(0.0, index=df.index)
-            entries = pd.Series(0.0, index=df.index)
-            exits = pd.Series(0.0, index=df.index)
+            df = pd.concat(
+                [
+                    pd.to_numeric(close, errors="coerce").rename("close"),
+                    pd.to_numeric(signals, errors="coerce").rename("signal"),
+                ],
+                axis=1,
+            )
+            df["signal"] = df["signal"].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+            df["signal"] = df["signal"].clip(lower=0.0, upper=1.0)
+            df = df.dropna(subset=["close"])
+            df = df[df["close"] > 0]
+
+            if df.empty:
+                raise ValueError("No valid price data provided")
+
+            position = pd.Series(0.0, index=df.index, dtype=float)
+            entries = pd.Series(0.0, index=df.index, dtype=float)
+            exits = pd.Series(0.0, index=df.index, dtype=float)
             trades = []
 
+            in_position = False
+            entry_idx = None
+            entry_price = None
+            current_size = 0.0
+
             for i in range(len(df)):
-                # Decrement days in position
-                if i > 0 and entry_dates.iloc[i - 1] > 0:
-                    entry_dates.iloc[i] = entry_dates.iloc[i - 1] + 1
+                signal_value = float(df["signal"].iloc[i])
 
-                # Auto-exit if holding period exceeded
-                if (self.holding_period > 0 and
-                    entry_dates.iloc[i] > self.holding_period and
-                    (i == 0 or position.iloc[i - 1] > 0)):
-                    # Exit position due to holding period expiration
-                    if i > 0 and position.iloc[i - 1] > 0:
-                        entry_idx = i - entry_dates.iloc[i] + 1
-                        if entry_idx >= 0 and entry_idx < len(df):
-                            exit_price = df['close'].iloc[i]
-                            entry_price = df['close'].iloc[entry_idx]
-                            if entry_price > 0:
-                                exit_return = (exit_price / entry_price - 1) * 100
-                            else:
-                                exit_return = 0
-                            trades.append({
-                                'entry_idx': entry_idx,
-                                'entry_date': df.index[entry_idx],
-                                'entry_price': entry_price,
-                                'exit_idx': i,
-                                'exit_date': df.index[i],
-                                'exit_price': exit_price,
-                                'return_pct': exit_return
-                            })
-                            exits.iloc[i] = 1.0
-                            position.iloc[i] = 0.0
-                            entry_dates.iloc[i] = 0
-                            continue
+                if not in_position and signal_value > 0:
+                    in_position = True
+                    entry_idx = i
+                    entry_price = float(df["close"].iloc[i])
+                    current_size = signal_value if self.position_type == "dynamic" else 1.0
+                    position.iloc[i] = current_size
+                    entries.iloc[i] = current_size
+                    continue
 
-                # New entry signal
-                if df['signal'].iloc[i] > 0 and (i == 0 or position.iloc[i - 1] == 0):
-                    position.iloc[i] = df['signal'].iloc[i]
-                    entries.iloc[i] = df['signal'].iloc[i]
-                    entry_dates.iloc[i] = 1
-                elif i > 0 and position.iloc[i - 1] > 0:
-                    # Hold position (if not expired)
-                    if entry_dates.iloc[i] <= self.holding_period:
-                        position.iloc[i] = position.iloc[i - 1]
+                if not in_position:
+                    continue
 
-                # Exit signal (strategy says exit)
-                if df['signal'].iloc[i] == 0 and (i == 0 or position.iloc[i - 1] > 0):
-                    if i > 0 and position.iloc[i - 1] > 0:
-                        entry_idx = i - entry_dates.iloc[i] + 1
-                        if entry_idx >= 0 and entry_idx < len(df):
-                            exit_price = df['close'].iloc[i]
-                            entry_price = df['close'].iloc[entry_idx]
-                            if entry_price > 0:
-                                exit_return = (exit_price / entry_price - 1) * 100
-                            else:
-                                exit_return = 0
-                            trades.append({
-                                'entry_idx': entry_idx,
-                                'entry_date': df.index[entry_idx],
-                                'entry_price': entry_price,
-                                'exit_idx': i,
-                                'exit_date': df.index[i],
-                                'exit_price': exit_price,
-                                'return_pct': exit_return
-                            })
-                            exits.iloc[i] = 1.0
-                            position.iloc[i] = 0.0
-                            entry_dates.iloc[i] = 0
+                held_periods = i - entry_idx
+                exit_due_to_signal = signal_value <= 0 and i > entry_idx
+                exit_due_to_time = self.holding_period > 0 and held_periods >= self.holding_period
+
+                if exit_due_to_signal or exit_due_to_time:
+                    exit_price = float(df["close"].iloc[i])
+                    trades.append({
+                        'entry_idx': entry_idx,
+                        'entry_date': df.index[entry_idx],
+                        'entry_price': entry_price,
+                        'exit_idx': i,
+                        'exit_date': df.index[i],
+                        'exit_price': exit_price,
+                        'return_pct': (exit_price / entry_price - 1) * 100 if entry_price else 0.0
+                    })
+                    exits.iloc[i] = 1.0
+                    in_position = False
+                    entry_idx = None
+                    entry_price = None
+                    current_size = 0.0
+                else:
+                    if self.position_type == "dynamic" and signal_value > 0:
+                        current_size = signal_value
+                    position.iloc[i] = current_size
 
             # Compute daily returns based on position
-            price_returns = df['close'].pct_change()
-            daily_returns = position.shift(1) * price_returns
+            price_returns = df['close'].pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+            daily_returns = position.shift(1).fillna(0.0) * price_returns
 
             # Apply fees on trade days (entry/exit)
             trade_days = (entries > 0) | (exits > 0)
@@ -189,11 +175,13 @@ class Strategy(ABC):
         except Exception as e:
             print(f"Error in compute_positions_and_equity: {e}")
             # Return safe default values
-            empty_series = pd.Series(dtype=float, index=close.index if isinstance(close, pd.Series) else pd.DatetimeIndex([]))
+            index = close.index if isinstance(close, pd.Series) else pd.DatetimeIndex([])
+            empty_series = pd.Series(0.0, index=index, dtype=float)
+            equity = pd.Series(initial_equity, index=index, dtype=float)
             return {
                 'position': empty_series,
                 'daily_return': empty_series,
-                'equity': pd.Series([initial_equity], index=close.index[:1] if isinstance(close, pd.Series) else pd.DatetimeIndex([])),
+                'equity': equity,
                 'entries': empty_series,
                 'exits': empty_series,
                 'trades': []
@@ -218,7 +206,17 @@ class Strategy(ABC):
         --------
         dict with keys: total_return, sharpe_ratio, max_drawdown, win_rate
         """
-        # Total return - handle division by zero
+        equity_series = pd.to_numeric(equity_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+        daily_returns = pd.to_numeric(daily_returns, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+        if equity_series.empty:
+            return {
+                'total_return': 0.0,
+                'sharpe_ratio': 0.0,
+                'max_drawdown': 0.0,
+                'win_rate': 0.0
+            }
+
         initial_value = equity_series.iloc[0]
         final_value = equity_series.iloc[-1]
         
@@ -238,12 +236,13 @@ class Strategy(ABC):
 
         # Sharpe ratio
         excess_return = daily_returns.mean() - (risk_free_rate / periods)
-        sharpe = (excess_return / daily_returns.std()) * np.sqrt(periods) if daily_returns.std() > 0 else 0
+        std_dev = daily_returns.std()
+        sharpe = (excess_return / std_dev) * np.sqrt(periods) if std_dev > 0 else 0.0
 
         # Max drawdown
         running_max = equity_series.cummax()
-        drawdown = (equity_series / running_max - 1) * 100
-        max_dd = drawdown.min()
+        drawdown = (equity_series / running_max.replace(0, np.nan) - 1) * 100
+        max_dd = drawdown.replace([np.inf, -np.inf], np.nan).fillna(0.0).min()
 
         # Win rate (% of profitable days)
         profitable_days = (daily_returns > 0).sum()
@@ -269,10 +268,12 @@ class MovingAverageCrossover(Strategy):
         ma200 = indicators_dict.get('ma200')
 
         if ma50 is None or ma200 is None:
-            raise ValueError("MovingAverageCrossover requires 'ma50' and 'ma200' in indicators_dict")
+            return pd.Series(0.0, index=price.index, dtype=float)
 
         # Signal: 1 when MA50 > MA200
-        signal = (ma50 > ma200).astype(float)
+        ma50 = ma50.reindex(price.index)
+        ma200 = ma200.reindex(price.index)
+        signal = (ma50 > ma200).fillna(False).astype(float)
         # Shift to avoid lookahead bias
         signal = signal.shift(1).fillna(0)
 
@@ -300,7 +301,9 @@ class RSIStrategy(Strategy):
         rsi_values = indicators_dict.get('rsi')
 
         if rsi_values is None:
-            raise ValueError("RSIStrategy requires 'rsi' in indicators_dict")
+            return pd.Series(0.0, index=price.index, dtype=float)
+
+        rsi_values = rsi_values.reindex(price.index).fillna(50.0)
 
         if self.mode == "threshold":
             signal = self._threshold_mode(rsi_values)
@@ -365,7 +368,10 @@ class BollingerBandsStrategy(Strategy):
         close = indicators_dict.get('close')
 
         if upper is None or lower is None or close is None:
-            raise ValueError("BollingerBandsStrategy requires 'bb_upper', 'bb_lower', 'close' in indicators_dict")
+            return pd.Series(0.0, index=price.index, dtype=float)
+
+        upper = upper.reindex(close.index)
+        lower = lower.reindex(close.index)
 
         signal = pd.Series(0.0, index=close.index)
 
@@ -401,5 +407,13 @@ def buy_hold_equity(close, initial_equity=100):
     pd.Series
         Equity curve (starting at initial_equity).
     """
-    normalized = close / close.iloc[0]
+    close = pd.to_numeric(close, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if close.empty or initial_equity <= 0:
+        return pd.Series(dtype=float)
+
+    first_price = close.iloc[0]
+    if first_price <= 0 or pd.isna(first_price):
+        return pd.Series(initial_equity, index=close.index, dtype=float)
+
+    normalized = close / first_price
     return initial_equity * normalized

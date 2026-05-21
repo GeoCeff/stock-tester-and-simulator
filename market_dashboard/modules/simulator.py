@@ -10,6 +10,28 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import copy
 
+REQUIRED_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Volume']
+
+
+def _single_ticker_frame(data: pd.DataFrame) -> pd.DataFrame:
+    """Return a single-ticker OHLCV frame from either supported column shape."""
+    if not isinstance(data.columns, pd.MultiIndex):
+        return data.copy()
+
+    level0 = {str(value) for value in data.columns.get_level_values(0)}
+    level1 = {str(value) for value in data.columns.get_level_values(1)}
+
+    if set(REQUIRED_COLUMNS) & level0:
+        ticker = data.columns.get_level_values(1)[0]
+        return data.xs(ticker, level=1, axis=1).copy()
+
+    if set(REQUIRED_COLUMNS) & level1:
+        ticker = data.columns.get_level_values(0)[0]
+        return data.xs(ticker, level=0, axis=1).copy()
+
+    raise ValueError("Could not identify OHLCV columns in simulator data")
+
+
 class TradingSimulator:
     """
     Manual trading simulator that allows users to make buy/sell decisions
@@ -36,6 +58,9 @@ class TradingSimulator:
         self.equity_history: List[Dict] = []
         self.current_date = None
         self.current_price = None
+        self.start_date = None
+        self.end_date = None
+        self.sim_data = None
 
     def set_timeframe(self, data: pd.DataFrame, start_date, end_date):
         """
@@ -54,9 +79,15 @@ class TradingSimulator:
             if data.empty:
                 raise ValueError("Data DataFrame is empty")
 
-            # Convert date objects to pd.Timestamp for proper comparison
+            data = _single_ticker_frame(data)
+            data.index = pd.to_datetime(data.index)
+            if isinstance(data.index, pd.DatetimeIndex) and data.index.tz is not None:
+                data.index = data.index.tz_convert(None)
+
             self.start_date = pd.Timestamp(start_date)
             self.end_date = pd.Timestamp(end_date)
+            if self.end_date == self.end_date.normalize():
+                self.end_date = self.end_date + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
 
             if self.start_date >= self.end_date:
                 raise ValueError("Start date must be before end date")
@@ -69,15 +100,15 @@ class TradingSimulator:
                 raise ValueError("No data available for the selected timeframe")
 
             # Validate required columns exist
-            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            if isinstance(self.sim_data.columns, pd.MultiIndex):
-                available_columns = self.sim_data.columns.get_level_values(1).unique()
-            else:
-                available_columns = self.sim_data.columns
+            available_columns = self.sim_data.columns
 
-            missing_columns = [col for col in required_columns if col not in available_columns]
+            missing_columns = [col for col in REQUIRED_COLUMNS if col not in available_columns]
             if missing_columns:
                 raise ValueError(f"Missing required columns: {missing_columns}")
+
+            self.sim_data = self.sim_data.dropna(subset=['Close'])
+            if self.sim_data.empty:
+                raise ValueError("No valid close prices available for the selected timeframe")
 
             # Set initial date and price - ensure scalar values
             self.current_date = self.sim_data.index[0]
@@ -282,6 +313,9 @@ class TradingSimulator:
         Returns:
             True if successful, False if end of data reached
         """
+        if self.sim_data is None or self.current_date is None:
+            return False
+
         current_idx = self.sim_data.index.get_loc(self.current_date)
 
         new_idx = current_idx + steps
@@ -313,6 +347,10 @@ class TradingSimulator:
         Returns:
             True if successful, False if date not in range
         """
+        if self.sim_data is None:
+            return False
+
+        target_date = pd.Timestamp(target_date)
         if target_date not in self.sim_data.index:
             return False
 
@@ -407,7 +445,7 @@ class TradingSimulator:
 
 def create_simulator_session():
     """Create a new simulator session in session state"""
-    if 'simulator' not in st.session_state:
+    if 'simulator' not in st.session_state or not isinstance(st.session_state.simulator, dict):
         st.session_state.simulator = {
             'active': False,
             'engine': TradingSimulator(),
@@ -415,6 +453,15 @@ def create_simulator_session():
             'total_steps': 0,
             'is_playing': False
         }
+        return
+
+    simulator_state = st.session_state.simulator
+    if simulator_state.get('engine') is None or not isinstance(simulator_state.get('engine'), TradingSimulator):
+        simulator_state['engine'] = TradingSimulator()
+    simulator_state.setdefault('active', False)
+    simulator_state.setdefault('current_step', 0)
+    simulator_state.setdefault('total_steps', 0)
+    simulator_state.setdefault('is_playing', False)
 
 def get_simulator_engine() -> TradingSimulator:
     """Get the current simulator engine"""

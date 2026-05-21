@@ -15,15 +15,8 @@ def moving_averages(price):
         if not isinstance(price, pd.Series):
             raise ValueError("Price must be a pandas Series")
 
-        if len(price) < 50:
-            return None, None  # Insufficient data for MA50
-
         ma50 = price.rolling(50).mean()
-
-        if len(price) < 200:
-            ma200 = None  # Insufficient data for MA200
-        else:
-            ma200 = price.rolling(200).mean()
+        ma200 = price.rolling(200).mean()
 
         return ma50, ma200
 
@@ -47,23 +40,28 @@ def rsi(close, period=14):
         if not isinstance(close, pd.Series):
             raise ValueError("Close must be a pandas Series")
 
+        close = pd.to_numeric(close, errors="coerce")
+
         if len(close) < period + 1:
-            return pd.Series(dtype=float)  # Insufficient data
+            return pd.Series(50.0, index=close.index, dtype=float)
 
         delta = close.diff()
 
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
 
-        rs = gain.rolling(period).mean() / loss.rolling(period).mean()
+        avg_gain = gain.rolling(period).mean()
+        avg_loss = loss.rolling(period).mean()
 
-        # Handle division by zero
-        rs = rs.replace([np.inf, -np.inf], np.nan)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            rs = avg_gain / avg_loss
 
         rsi_values = 100 - (100/(1+rs))
+        rsi_values = rsi_values.mask((avg_loss == 0) & (avg_gain > 0), 100)
+        rsi_values = rsi_values.mask((avg_loss == 0) & (avg_gain == 0), 50)
 
         # Fill NaN values with neutral RSI (50)
-        rsi_values = rsi_values.fillna(50)
+        rsi_values = rsi_values.replace([np.inf, -np.inf], np.nan).fillna(50)
 
         return rsi_values
 
@@ -86,8 +84,7 @@ def macd(close):
         if not isinstance(close, pd.Series):
             raise ValueError("Close must be a pandas Series")
 
-        if len(close) < 26:
-            return None, None  # Insufficient data
+        close = pd.to_numeric(close, errors="coerce")
 
         ema12 = close.ewm(span=12).mean()
         ema26 = close.ewm(span=26).mean()
@@ -118,8 +115,7 @@ def bollinger(close, period=20, std_dev=2):
         if not isinstance(close, pd.Series):
             raise ValueError("Close must be a pandas Series")
 
-        if len(close) < period:
-            return None, None  # Insufficient data
+        close = pd.to_numeric(close, errors="coerce")
 
         ma20 = close.rolling(period).mean()
         std20 = close.rolling(period).std()

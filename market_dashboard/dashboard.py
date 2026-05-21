@@ -83,16 +83,21 @@ def extract_ticker_data(data, ticker, start_date, end_date):
     if data is None or data.empty:
         raise ValueError("No data provided")
     
-    if len(data.columns.names) > 1:  # MultiIndex (multiple tickers)
-        if ticker not in data.columns.get_level_values(1):
+    if isinstance(data.columns, pd.MultiIndex):
+        if ticker in data.columns.get_level_values(1):
+            ticker_data = data.xs(ticker, level=1, axis=1)
+        elif ticker in data.columns.get_level_values(0):
+            ticker_data = data.xs(ticker, level=0, axis=1)
+        else:
             raise ValueError(f"Ticker {ticker} not found in data")
-        ticker_data = data.xs(ticker, level=1, axis=1)
     else:
         ticker_data = data
     
     if ticker_data.empty:
         raise ValueError(f"No data available for ticker {ticker}")
     
+    start_date = pd.Timestamp(start_date).date()
+    end_date = pd.Timestamp(end_date).date()
     mask = (ticker_data.index.date >= start_date) & (ticker_data.index.date <= end_date)
     filtered_data = ticker_data[mask]
     
@@ -104,8 +109,8 @@ def extract_ticker_data(data, ticker, start_date, end_date):
 
 def compute_all_indicators(close):
     """Pre-compute all indicators needed by strategies."""
-    if close is None or close.empty or len(close) < 50:  # Need at least 50 points for indicators
-        raise ValueError("Insufficient data for indicator computation (need at least 50 data points)")
+    if close is None or close.empty or len(close) < 2:
+        raise ValueError("Insufficient data for indicator computation (need at least 2 data points)")
     
     try:
         ma50, ma200 = moving_averages(close)
@@ -137,9 +142,10 @@ def get_strategy_instance(name, config):
         raise ValueError(f"Unknown strategy: {name}")
     
     strategy_class = strategies[name]
+    position_label = str(config['position_type']).lower()
     return strategy_class(
         holding_period=config['holding_period'],
-        position_type="fixed" if config['position_type'] == "Fixed" else "dynamic",
+        position_type="dynamic" if position_label == "dynamic" else "fixed",
         fee_pct=config['fee_pct']
     )
 
@@ -228,7 +234,7 @@ def display_trade_log(backtest_data, strategy_name):
     column_names = ['Entry Date', 'Entry Price', 'Exit Date', 'Exit Price', 'Return %']
     display_df.columns = column_names[:len(display_columns)]
     
-    st.dataframe(display_df, width='stretch', hide_index=True)
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
     
     # Trade statistics - handle missing data
     total_trades = len(trades)
@@ -387,7 +393,7 @@ def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_s
     if num_rows == 5:
         fig.update_yaxes(title_text="Equity ($)", row=5, col=1)
     
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ============================================================================
@@ -568,7 +574,7 @@ def show_simulator_mode(data, selected_ticker, start, end, interval):
                     buy_cost = buy_qty * simulator.current_price if hasattr(simulator, 'current_price') else 0
                     st.info(f"Cost: ${buy_cost:.2f}")
 
-                    if st.button("🟢 EXECUTE BUY", type="primary", width='stretch'):
+                    if st.button("🟢 EXECUTE BUY", type="primary", use_container_width=True):
                         if simulator.execute_buy(buy_qty):
                             price_str = f"${simulator.current_price:.2f}" if hasattr(simulator, 'current_price') else "N/A"
                             st.success(f"✅ Bought {buy_qty} shares at {price_str}")
@@ -590,7 +596,7 @@ def show_simulator_mode(data, selected_ticker, start, end, interval):
                     sell_value = sell_qty * simulator.current_price if hasattr(simulator, 'current_price') else 0
                     st.info(f"Value: ${sell_value:.2f}")
 
-                    if st.button("🔴 EXECUTE SELL", type="primary", width='stretch'):
+                    if st.button("🔴 EXECUTE SELL", type="primary", use_container_width=True):
                         if simulator.execute_sell(sell_qty):
                             price_str = f"${simulator.current_price:.2f}" if hasattr(simulator, 'current_price') else "N/A"
                             st.success(f"✅ Sold {sell_qty} shares at {price_str}")
@@ -607,33 +613,33 @@ def show_simulator_mode(data, selected_ticker, start, end, interval):
                 time_col1, time_col2, time_col3, time_col4, time_col5 = st.columns(5)
 
                 with time_col1:
-                    if st.button("⏮️ START", help="Go to beginning", width='stretch'):
+                    if st.button("⏮️ START", help="Go to beginning", use_container_width=True):
                         simulator.go_to_date(simulator.sim_data.index[0])
                         st.rerun()
 
                 with time_col2:
-                    if st.button("◀️ -1 DAY", help="Go back 1 day", width='stretch'):
+                    if st.button("◀️ -1 DAY", help="Go back 1 day", use_container_width=True):
                         if simulator.advance_time(-1):
                             st.rerun()
                         else:
                             st.info("Already at start")
 
                 with time_col3:
-                    if st.button("▶️ +1 DAY", help="Advance 1 day", width='stretch'):
+                    if st.button("▶️ +1 DAY", help="Advance 1 day", use_container_width=True):
                         if simulator.advance_time(1):
                             st.rerun()
                         else:
                             st.info("End of simulation reached")
 
                 with time_col4:
-                    if st.button("⏭️ +5 DAYS", help="Advance 5 days", width='stretch'):
+                    if st.button("⏭️ +5 DAYS", help="Advance 5 days", use_container_width=True):
                         if simulator.advance_time(5):
                             st.rerun()
                         else:
                             st.info("End of simulation reached")
 
                 with time_col5:
-                    if st.button("🔄 RESET", type="secondary", help="Reset simulation", width='stretch'):
+                    if st.button("🔄 RESET", type="secondary", help="Reset simulation", use_container_width=True):
                         reset_simulator()
                         st.rerun()
         else:
@@ -752,7 +758,7 @@ def display_simulator_chart(data, selected_ticker):
         fig.update_yaxes(title_text="Price ($)", row=1, col=1)
         fig.update_yaxes(title_text="Equity ($)", row=2, col=1)
 
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
         st.error(f"❌ Chart display error: {e}")
@@ -1085,11 +1091,13 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
                 with st.spinner("Analyzing data..."):
                     try:
                         # Get data for selected ticker
-                        analysis_data = download_data([selected_ticker], start, end, interval)
+                        raw_analysis_data = download_data([selected_ticker], start, end, interval)
 
-                        if len(analysis_data) == 0:
+                        if raw_analysis_data is None or len(raw_analysis_data) == 0:
                             st.error("❌ No data available for analysis")
                             return
+
+                        analysis_data = extract_ticker_data(raw_analysis_data, selected_ticker, start, end)
 
                         # Calculate indicators
                         indicators_data = {}
@@ -1162,6 +1170,12 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
 def display_analysis_chart(data, indicators, chart_type, selected_indicators):
     """Display analysis chart with indicators."""
     try:
+        if isinstance(data.columns, pd.MultiIndex):
+            if "Close" in data.columns.get_level_values(0):
+                data = data.xs(data.columns.get_level_values(1)[0], level=1, axis=1)
+            elif "Close" in data.columns.get_level_values(1):
+                data = data.xs(data.columns.get_level_values(0)[0], level=0, axis=1)
+
         # Create subplots based on indicators
         subplot_count = 1
         if "Volume" in selected_indicators:
@@ -1315,7 +1329,7 @@ def display_analysis_chart(data, indicators, chart_type, selected_indicators):
         fig.update_layout(height=600, showlegend=True, template=template)
         fig.update_xaxes(title_text="Date", row=subplot_count, col=1)
 
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
         st.error(f"❌ Chart display error: {e}")
@@ -1402,11 +1416,12 @@ def show_main_dashboard():
                 template='plotly_white' if st.session_state.get('theme', 'dark') == 'light' else 'plotly_dark',
                 height=400
             )
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
 
         if show_corr and not is_simulator_mode:
             st.subheader("🔗 Correlation Matrix")
-            returns = compute_returns(data.xs(selected_ticker, level=1, axis=1)["Close"]) if len(data.columns.names) > 1 else compute_returns(data["Close"])
+            close_for_corr = data["Close"] if isinstance(data.columns, pd.MultiIndex) and "Close" in data.columns.get_level_values(0) else data["Close"]
+            returns = compute_returns(close_for_corr)
             corr_matrix = correlation_matrix(returns.to_frame() if isinstance(returns, pd.Series) else returns)
 
             if corr_matrix is not None and not corr_matrix.empty:
@@ -1422,7 +1437,7 @@ def show_main_dashboard():
                     height=500,
                     template='plotly_white' if st.session_state.get('theme', 'dark') == 'light' else 'plotly_dark'
                 )
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
         st.error(f"❌ Dashboard error: {str(e)}")
@@ -1784,7 +1799,7 @@ def show_main_content_v2():
                 height=400
             )
 
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
             st.divider()
 
         # Correlation heatmap
@@ -1806,7 +1821,7 @@ def show_main_content_v2():
                     template='plotly_dark'
                 )
 
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig, use_container_width=True)
 
         # Footer
         st.divider()
@@ -2180,7 +2195,7 @@ def show_main_content_v2():
                         buy_cost = buy_qty * simulator.current_price if hasattr(simulator, 'current_price') else 0
                         st.info(f"Cost: ${buy_cost:.2f}")
 
-                        if st.button("🟢 EXECUTE BUY", type="primary", width='stretch'):
+                        if st.button("🟢 EXECUTE BUY", type="primary", use_container_width=True):
                             if simulator.execute_buy(buy_qty):
                                 st.success(f"✅ Bought {buy_qty} shares at ${simulator.current_price:.2f}")
                                 st.rerun()
@@ -2201,7 +2216,7 @@ def show_main_content_v2():
                         sell_value = sell_qty * simulator.current_price if hasattr(simulator, 'current_price') else 0
                         st.info(f"Value: ${sell_value:.2f}")
 
-                        if st.button("🔴 EXECUTE SELL", type="primary", width='stretch'):
+                        if st.button("🔴 EXECUTE SELL", type="primary", use_container_width=True):
                             if simulator.execute_sell(sell_qty):
                                 st.success(f"✅ Sold {sell_qty} shares at ${simulator.current_price:.2f}")
                                 st.rerun()
@@ -2217,33 +2232,33 @@ def show_main_content_v2():
                     time_col1, time_col2, time_col3, time_col4, time_col5 = st.columns(5)
 
                     with time_col1:
-                        if st.button("⏮️ START", help="Go to beginning", width='stretch'):
+                        if st.button("⏮️ START", help="Go to beginning", use_container_width=True):
                             simulator.go_to_date(simulator.sim_data.index[0])
                             st.rerun()
 
                     with time_col2:
-                        if st.button("◀️ -1 DAY", help="Go back 1 day", width='stretch'):
+                        if st.button("◀️ -1 DAY", help="Go back 1 day", use_container_width=True):
                             if simulator.advance_time(-1):
                                 st.rerun()
                             else:
                                 st.info("Already at start")
 
                     with time_col3:
-                        if st.button("▶️ +1 DAY", help="Advance 1 day", width='stretch'):
+                        if st.button("▶️ +1 DAY", help="Advance 1 day", use_container_width=True):
                             if simulator.advance_time(1):
                                 st.rerun()
                             else:
                                 st.info("End of simulation reached")
 
                     with time_col4:
-                        if st.button("⏭️ +5 DAYS", help="Advance 5 days", width='stretch'):
+                        if st.button("⏭️ +5 DAYS", help="Advance 5 days", use_container_width=True):
                             if simulator.advance_time(5):
                                 st.rerun()
                             else:
                                 st.info("End of simulation reached")
 
                     with time_col5:
-                        if st.button("🔄 RESET", type="secondary", help="Reset simulation", width='stretch'):
+                        if st.button("🔄 RESET", type="secondary", help="Reset simulation", use_container_width=True):
                             reset_simulator()
                             st.rerun()
             else:
@@ -2386,7 +2401,7 @@ def show_main_content_v2():
 
                 port_fig = go.Figure()
                 port_fig.add_trace(go.Scatter(x=port_res['nav'].index, y=port_res['nav'].values, name='Portfolio NAV'))
-                st.plotly_chart(port_fig, width='stretch')
+                st.plotly_chart(port_fig, use_container_width=True)
 
         except Exception as e:
             st.error(f"Portfolio backtest failed: {e}")
@@ -2633,7 +2648,7 @@ def show_main_content_v2():
                 fig.update_yaxes(title_text="Price ($)", row=1, col=1)
                 fig.update_yaxes(title_text="Equity ($)", row=2, col=1)
                 
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("💡 Activate the simulator to see the trading chart")
         
@@ -2658,7 +2673,7 @@ def show_main_content_v2():
             height=400
         )
         
-        st.plotly_chart(drawdown_fig, width='stretch')
+        st.plotly_chart(drawdown_fig, use_container_width=True)
         st.divider()
     
     # Correlation heatmap
@@ -2684,7 +2699,7 @@ def show_main_content_v2():
             template='plotly_white' if st.session_state.get('theme', 'dark') == 'light' else 'plotly_dark'
         )
         
-        st.plotly_chart(corr_fig, width='stretch')
+        st.plotly_chart(corr_fig, use_container_width=True)
     
     # Footer
     st.divider()
@@ -2726,7 +2741,7 @@ def show_welcome_dashboard():
         - Compare against buy-and-hold
         """)
         
-        if st.button("🎯 Start Backtesting", type="primary", width='stretch'):
+        if st.button("🎯 Start Backtesting", type="primary", use_container_width=True):
             st.session_state.show_welcome = False
             st.session_state.mode = "backtesting"
             st.rerun()
@@ -2739,7 +2754,7 @@ def show_welcome_dashboard():
         - Risk-free learning environment
         """)
         
-        if st.button("🎲 Start Simulator", type="primary", width='stretch'):
+        if st.button("🎲 Start Simulator", type="primary", use_container_width=True):
             from modules.simulator import create_simulator_session
             create_simulator_session()
             st.session_state.show_welcome = False
@@ -2757,7 +2772,7 @@ def show_welcome_dashboard():
         - Market correlation analysis
         """)
         
-        if st.button("🔎 Explore Stocks", type="primary", width='stretch'):
+        if st.button("🔎 Explore Stocks", type="primary", use_container_width=True):
             st.session_state.show_welcome = False
             st.session_state.mode = "analysis"
             st.rerun()
@@ -2842,7 +2857,7 @@ def show_welcome_dashboard():
     st.divider()
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        if st.button("⏭️ Skip Welcome - Go to Dashboard", type="secondary", width='stretch'):
+        if st.button("⏭️ Skip Welcome - Go to Dashboard", type="secondary", use_container_width=True):
             st.session_state.show_welcome = False
             st.rerun()
 
@@ -2920,7 +2935,8 @@ def show_stock_analysis_mode():
             ticker = st.session_state.ticker_input.split(',')[0].strip().upper()
             with st.spinner(f"Loading {ticker} data..."):
                 info = get_stock_info(ticker)
-                data = download_data(ticker, '2023-01-01', pd.to_datetime('today'), '1d')
+                raw_data = download_data(ticker, '2023-01-01', pd.to_datetime('today'), '1d')
+                data = extract_ticker_data(raw_data, ticker, '2023-01-01', pd.to_datetime('today'))
             
             if info and len(data) > 0:
                 st.subheader(f"📈 {ticker} - {info.get('name', 'Stock')}")

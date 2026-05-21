@@ -190,7 +190,7 @@ def get_popular_stocks(category: str = None) -> List[str]:
 
 def format_market_cap(market_cap: Optional[float]) -> str:
     """Format market cap in billions/trillions"""
-    if market_cap is None:
+    if market_cap is None or pd.isna(market_cap):
         return "N/A"
 
     if market_cap >= 1e12:
@@ -204,7 +204,7 @@ def format_market_cap(market_cap: Optional[float]) -> str:
 
 def format_price(price: Optional[float]) -> str:
     """Format price with appropriate decimals"""
-    if price is None:
+    if price is None or pd.isna(price):
         return "N/A"
     elif price >= 100:
         return f"${price:.2f}"
