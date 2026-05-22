@@ -25,7 +25,7 @@ print("STOCK BACKTESTER - INTEGRATION TEST")
 print("=" * 70)
 
 # Test 1: Data download
-print("\n✓ Test 1: Data Download")
+print("\nTest 1: Data Download")
 print("-" * 70)
 try:
     tickers = ["AAPL", "MSFT"]
@@ -33,14 +33,14 @@ try:
     end = pd.to_datetime("2023-12-31")
     
     data = download_data(tickers, start, end, "1d")
-    print(f"✅ Downloaded {len(data)} rows for {len(tickers)} tickers")
+    print(f"Downloaded {len(data)} rows for {len(tickers)} tickers")
     print(f"   Columns: {list(data.columns.get_level_values(0).unique())}")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"FAILED: {e}")
     sys.exit(1)
 
 # Test 2: Indicators
-print("\n✓ Test 2: Indicator Computation")
+print("\nTest 2: Indicator Computation")
 print("-" * 70)
 try:
     aapl_data = data.xs("AAPL", level=1, axis=1)
@@ -51,17 +51,17 @@ try:
     upper, lower = bollinger(close)
     macd_line, signal = macd(close)
     
-    print(f"✅ Computed indicators successfully")
+    print(f"Computed indicators successfully")
     print(f"   MA50: {ma50.iloc[-1]:.2f}")
     print(f"   MA200: {ma200.iloc[-1]:.2f}")
     print(f"   RSI: {rsi_val.iloc[-1]:.1f}")
     print(f"   MACD: {macd_line.iloc[-1]:.4f}")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"FAILED: {e}")
     sys.exit(1)
 
 # Test 3: Strategy - Moving Average Crossover
-print("\n✓ Test 3: Strategy - Moving Average Crossover")
+print("\nTest 3: Strategy - Moving Average Crossover")
 print("-" * 70)
 try:
     strategy = MovingAverageCrossover(
@@ -88,17 +88,17 @@ try:
         risk_free_rate=0.02
     )
     
-    print(f"✅ MA Crossover backtest completed")
+    print(f"MA Crossover backtest completed")
     print(f"   Total Return: {metrics['total_return']:.2f}%")
     print(f"   Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
     print(f"   Max Drawdown: {metrics['max_drawdown']:.2f}%")
     print(f"   Win Rate: {metrics['win_rate']:.1f}%")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"FAILED: {e}")
     sys.exit(1)
 
 # Test 4: Strategy - RSI Threshold
-print("\n✓ Test 4: Strategy - RSI Threshold")
+print("\nTest 4: Strategy - RSI Threshold")
 print("-" * 70)
 try:
     strategy = RSIStrategy(
@@ -116,15 +116,15 @@ try:
         interval="1d"
     )
     
-    print(f"✅ RSI (Threshold) backtest completed")
+    print(f"RSI (Threshold) backtest completed")
     print(f"   Total Return: {metrics['total_return']:.2f}%")
     print(f"   Trades: {len(backtest_result['entries'][backtest_result['entries'] > 0])}")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"FAILED: {e}")
     sys.exit(1)
 
 # Test 5: Strategy - Bollinger Bands
-print("\n✓ Test 5: Strategy - Bollinger Bands")
+print("\nTest 5: Strategy - Bollinger Bands")
 print("-" * 70)
 try:
     strategy = BollingerBandsStrategy(
@@ -141,15 +141,15 @@ try:
         interval="1d"
     )
     
-    print(f"✅ Bollinger Bands backtest completed")
+    print(f"Bollinger Bands backtest completed")
     print(f"   Total Return: {metrics['total_return']:.2f}%")
     print(f"   Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"FAILED: {e}")
     sys.exit(1)
 
 # Test 6: Portfolio metrics
-print("\n✓ Test 6: Portfolio Metrics")
+print("\nTest 6: Portfolio Metrics")
 print("-" * 70)
 try:
     bh_equity = buy_hold_equity(close, initial_equity=100)
@@ -159,30 +159,30 @@ try:
     dd = max_drawdown(bh_returns)
     wr = win_rate(bh_returns)
     
-    print(f"✅ Portfolio metrics computed")
+    print(f"Portfolio metrics computed")
     print(f"   Sharpe (Buy-Hold): {result:.2f}")
     print(f"   Max Drawdown: {dd:.2f}%")
     print(f"   Win Rate: {wr:.1f}%")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"FAILED: {e}")
     sys.exit(1)
 
 # Test 7: Multi-ticker correlation
-print("\n✓ Test 7: Multi-Ticker Analysis")
+print("\nTest 7: Multi-Ticker Analysis")
 print("-" * 70)
 try:
     returns_multi = compute_returns(data["Close"])
     corr = correlation_matrix(returns_multi)
     
-    print(f"✅ Correlation analysis completed")
+    print(f"Correlation analysis completed")
     print(f"   AAPL-MSFT correlation: {corr.loc['AAPL', 'MSFT']:.3f}")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"FAILED: {e}")
     sys.exit(1)
 
 # Final summary
 print("\n" + "=" * 70)
-print("✅ ALL TESTS PASSED")
+print("ALL TESTS PASSED")
 print("=" * 70)
 print("\nThe Stock Backtester is ready for use!")
 print("Run: streamlit run market_dashboard/dashboard.py")

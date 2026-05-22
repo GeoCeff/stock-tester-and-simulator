@@ -342,9 +342,8 @@ def test_simulator_module():
 
     # Extract close prices
     if isinstance(test_data.columns, pd.MultiIndex):
-        close_prices = test_data[('AAPL', 'Close')]
-        # For simulator, use data with proper column access
-        sim_data = test_data['AAPL']  # Get the AAPL level
+        sim_data = data.get_ticker_frame(test_data, 'AAPL')
+        close_prices = sim_data['Close']
     else:
         close_prices = test_data['Close']
         sim_data = test_data

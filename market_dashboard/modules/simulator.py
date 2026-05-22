@@ -55,6 +55,7 @@ class TradingSimulator:
         self.cash = self.initial_equity
         self.positions: List[Dict] = []  # Open positions
         self.trades: List[Dict] = []     # Completed trades
+        self.orders: List[Dict] = []     # All submitted orders
         self.equity_history: List[Dict] = []
         self.current_date = None
         self.current_price = None
@@ -138,7 +139,8 @@ class TradingSimulator:
         Returns:
             Dictionary with current state information
         """
-        positions_value = sum(pos['quantity'] * self.current_price for pos in self.positions)
+        total_shares = self.total_shares()
+        positions_value = total_shares * self.current_price
         total_equity = self.cash + positions_value
 
         return {
@@ -148,9 +150,112 @@ class TradingSimulator:
             'positions_value': positions_value,
             'total_equity': total_equity,
             'positions': len(self.positions),
+            'shares': total_shares,
             'total_trades': len(self.trades),
             'unrealized_pnl': positions_value - sum(pos['cost'] for pos in self.positions)
         }
+
+    def total_shares(self) -> int:
+        """Return the total number of currently held shares."""
+        return int(sum(pos['quantity'] for pos in self.positions))
+
+    def max_affordable_quantity(self) -> int:
+        """Return the largest whole-share buy order the current cash can cover."""
+        if self.current_price is None or self.current_price <= 0:
+            return 0
+
+        cost_per_share = self.current_price * (1 + self.transaction_fee)
+        if cost_per_share <= 0:
+            return 0
+
+        return max(int(float(self.cash) // cost_per_share), 0)
+
+    def quantity_for_cash_fraction(self, fraction: float) -> int:
+        """Return a whole-share quantity for a fraction of available cash."""
+        if self.current_price is None or self.current_price <= 0:
+            return 0
+
+        fraction = max(min(float(fraction), 1.0), 0.0)
+        deployable_cash = float(self.cash) * fraction
+        cost_per_share = self.current_price * (1 + self.transaction_fee)
+        if cost_per_share <= 0:
+            return 0
+
+        return max(min(int(deployable_cash // cost_per_share), self.max_affordable_quantity()), 0)
+
+    def preview_buy(self, quantity: int) -> Dict:
+        """Preview a buy order without mutating simulator state."""
+        quantity = int(quantity or 0)
+        trade_value = float(quantity * (self.current_price or 0.0))
+        fee = trade_value * self.transaction_fee
+        total_cost = trade_value + fee
+        shares_after = self.total_shares() + quantity
+        cash_after = float(self.cash) - total_cost
+        position_value_after = shares_after * float(self.current_price or 0.0)
+        equity_after = cash_after + position_value_after
+        exposure_after = (position_value_after / equity_after * 100) if equity_after > 0 else 0.0
+        can_execute, reason = self.can_buy(quantity)
+
+        return {
+            'action': 'BUY',
+            'quantity': quantity,
+            'trade_value': trade_value,
+            'fee': fee,
+            'cash_after': cash_after,
+            'shares_after': shares_after,
+            'equity_after': equity_after,
+            'exposure_after': exposure_after,
+            'can_execute': can_execute,
+            'reason': reason,
+        }
+
+    def preview_sell(self, quantity: int) -> Dict:
+        """Preview a sell order without mutating simulator state."""
+        quantity = int(quantity or 0)
+        total_shares = self.total_shares()
+        trade_value = float(quantity * (self.current_price or 0.0))
+        fee = trade_value * self.transaction_fee
+        proceeds = trade_value - fee
+        shares_after = max(total_shares - quantity, 0)
+        cash_after = float(self.cash) + proceeds
+        position_value_after = shares_after * float(self.current_price or 0.0)
+        equity_after = cash_after + position_value_after
+        exposure_after = (position_value_after / equity_after * 100) if equity_after > 0 else 0.0
+        cost_basis = self._cost_basis_for_sale(min(quantity, total_shares))
+        realized_pnl = proceeds - cost_basis
+        can_execute, reason = self.can_sell(quantity)
+
+        return {
+            'action': 'SELL',
+            'quantity': quantity,
+            'trade_value': trade_value,
+            'fee': fee,
+            'proceeds': proceeds,
+            'cost_basis': cost_basis,
+            'realized_pnl': realized_pnl,
+            'cash_after': cash_after,
+            'shares_after': shares_after,
+            'equity_after': equity_after,
+            'exposure_after': exposure_after,
+            'can_execute': can_execute,
+            'reason': reason,
+        }
+
+    def _cost_basis_for_sale(self, quantity: int) -> float:
+        """Estimate FIFO cost basis for a potential sale."""
+        shares_to_sell = int(quantity or 0)
+        total_cost_basis = 0.0
+
+        for pos in self.positions:
+            if shares_to_sell <= 0:
+                break
+
+            sell_quantity = min(shares_to_sell, pos['quantity'])
+            if pos['quantity'] > 0:
+                total_cost_basis += float((sell_quantity / pos['quantity']) * pos['cost'])
+            shares_to_sell -= sell_quantity
+
+        return total_cost_basis
 
     def can_buy(self, quantity: int) -> Tuple[bool, str]:
         """
@@ -224,6 +329,16 @@ class TradingSimulator:
 
             self.positions.append(position)
             self.cash = float(self.cash) - cost
+            self.orders.append({
+                'date': self.current_date,
+                'action': 'BUY',
+                'quantity': quantity,
+                'price': self.current_price,
+                'trade_value': quantity * self.current_price,
+                'fee': position['fee'],
+                'cash_after': self.cash,
+                'shares_after': self.total_shares(),
+            })
 
             # Record in equity history
             self._update_equity_history()
@@ -293,6 +408,19 @@ class TradingSimulator:
 
             self.trades.append(trade)
             self.cash = float(self.cash) + float(total_proceeds)
+            self.orders.append({
+                'date': self.current_date,
+                'action': 'SELL',
+                'quantity': quantity,
+                'price': self.current_price,
+                'trade_value': quantity * self.current_price,
+                'fee': trade['fee'],
+                'proceeds': total_proceeds,
+                'cost_basis': total_cost_basis,
+                'realized_pnl': trade['realized_pnl'],
+                'cash_after': self.cash,
+                'shares_after': self.total_shares(),
+            })
 
             # Record in equity history
             self._update_equity_history()
@@ -458,6 +586,8 @@ def create_simulator_session():
     simulator_state = st.session_state.simulator
     if simulator_state.get('engine') is None or not isinstance(simulator_state.get('engine'), TradingSimulator):
         simulator_state['engine'] = TradingSimulator()
+    elif not hasattr(simulator_state['engine'], 'orders'):
+        simulator_state['engine'].orders = []
     simulator_state.setdefault('active', False)
     simulator_state.setdefault('current_step', 0)
     simulator_state.setdefault('total_steps', 0)

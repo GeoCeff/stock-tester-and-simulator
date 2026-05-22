@@ -8,10 +8,19 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.subplots as sp
 import numpy as np
+import html
 from datetime import datetime, timedelta
 import traceback
 
-from modules.data import download_data
+from modules.data import (
+    DATA_SOURCE_OPTIONS,
+    DATA_SOURCE_STOOQ,
+    DEFAULT_DATA_SOURCE,
+    available_tickers,
+    get_close_prices,
+    get_ticker_frame,
+    load_market_data,
+)
 from modules.indicators import moving_averages, rsi, macd, bollinger
 from modules.utils import compute_returns, correlation_matrix
 from modules.strategies import (
@@ -23,12 +32,18 @@ from modules.optimizer import grid_search_strategy
 from modules.persistence import save_workspace, load_workspace
 from modules.stock_search import (
     search_stocks, get_stock_info, get_popular_stocks, 
-    get_stock_categories, format_market_cap, format_price
+    get_stock_categories, get_stock_preset_symbols, get_stock_presets,
+    format_market_cap, format_price
 )
 from modules.simulator import (
     TradingSimulator, create_simulator_session, get_simulator_engine, 
     reset_simulator
 )
+
+try:
+    from ui.theme import apply_app_theme, get_plotly_template
+except ImportError:
+    from market_dashboard.ui.theme import apply_app_theme, get_plotly_template
 
 try:
     from . import __version__
@@ -39,7 +54,7 @@ except ImportError:
 # CONFIGURATION & CONSTANTS
 # ============================================================================
 
-st.set_page_config(layout="wide", page_title="Quant Market Analytics", page_icon="📊")
+st.set_page_config(layout="wide", page_title="Quant Market Analytics", page_icon="Q")
 
 TRADING_DAYS_PER_YEAR = 252
 HOURS_PER_TRADING_DAY = 6.5
@@ -179,6 +194,336 @@ def manage_backtest_cache():
         st.session_state.backtest_cache = dict(cache_items[-max_cache_size//2:])
 
 
+def display_beginner_glossary():
+    """Show compact metric explanations for newer users."""
+    with st.expander("Metric glossary", expanded=False):
+        st.markdown(
+            """
+            **Total return** shows the full percentage gain or loss over the selected period.
+
+            **Sharpe ratio** compares return against volatility. Higher values usually mean smoother risk-adjusted performance.
+
+            **Max drawdown** is the largest peak-to-trough decline. It helps show how painful a strategy could have felt.
+
+            **Win rate** is the share of profitable trading periods or completed trades.
+
+            **VaR and CVaR** estimate downside risk. CVaR focuses on the average loss after the VaR threshold is breached.
+            """
+        )
+
+
+def load_data_with_status(
+    tickers,
+    start,
+    end,
+    interval,
+    data_source: str | None = None,
+    show_success: bool = False,
+    emit_status: bool = True,
+):
+    """Load market data and show a clear status when demo data is used."""
+    selected_source = data_source or st.session_state.get("data_source", DEFAULT_DATA_SOURCE)
+    data, status = load_market_data(tickers, start, end, interval, source=selected_source)
+    st.session_state.latest_data_status = status
+    if not emit_status:
+        return data
+
+    if status.get("status") == "partial":
+        unavailable = ", ".join(status.get("unavailable_tickers", []))
+        st.warning(f"{status['message']}. Unavailable: {unavailable}")
+    elif status.get("is_demo"):
+        st.warning(status["message"])
+    elif show_success:
+        st.caption(status["message"])
+    return data
+
+
+def _fmt_money(value):
+    return f"${float(value):,.2f}"
+
+
+def _fmt_pct(value):
+    return f"{float(value):.1f}%"
+
+
+def merge_ticker_input(existing, additions, replace=False):
+    """Merge ticker symbols into the comma-separated sidebar input."""
+    if isinstance(additions, str):
+        additions = [additions]
+
+    merged = [] if replace else [
+        ticker.strip().upper()
+        for ticker in str(existing or "").replace(";", ",").split(",")
+        if ticker.strip()
+    ]
+    for ticker in additions:
+        symbol = str(ticker).strip().upper()
+        if symbol and symbol not in merged:
+            merged.append(symbol)
+
+    return ",".join(merged)
+
+
+def render_status_strip(items):
+    """Render a compact label/value strip."""
+    cells = []
+    for label, value in items:
+        cells.append(
+            "<div class='qma-status-item'>"
+            f"<div class='qma-status-label'>{html.escape(str(label))}</div>"
+            f"<div class='qma-status-value'>{html.escape(str(value))}</div>"
+            "</div>"
+        )
+    st.markdown(f"<div class='qma-status-strip'>{''.join(cells)}</div>", unsafe_allow_html=True)
+
+
+def display_data_status(status):
+    """Show a compact data status pill and summary near the active workflow."""
+    if not status:
+        return
+
+    labels = {
+        "live": "Live data",
+        "demo": "Demo data",
+        "partial": "Partial data",
+        "unavailable": "Data unavailable",
+    }
+    state = status.get("status", "unavailable")
+    label = labels.get(state, "Data status")
+    loaded = ", ".join(status.get("loaded_tickers", [])) or "None"
+    unavailable = ", ".join(status.get("unavailable_tickers", [])) or "None"
+
+    st.markdown(
+        f"<span class='qma-status qma-status-{html.escape(state)}'>{html.escape(label)}</span> "
+        f"<span class='qma-muted'>{html.escape(status.get('message', ''))}</span>",
+        unsafe_allow_html=True,
+    )
+    render_status_strip([
+        ("Requested", status.get("requested_source", status.get("source", "N/A"))),
+        ("Source", status.get("source", "N/A")),
+        ("Rows", f"{status.get('row_count', 0):,}"),
+        ("Latest", status.get("latest_bar", "N/A")),
+        ("Date Range", f"{status.get('date_start', 'N/A')} to {status.get('date_end', 'N/A')}"),
+        ("Interval", status.get("interval", "N/A")),
+        ("Loaded", loaded),
+        ("Unavailable", unavailable),
+    ])
+
+    if state == "demo":
+        st.caption("Demo data is deterministic and intended for product exploration only. Charts and backtests are illustrative.")
+    elif state == "partial":
+        st.caption("Analysis continues with the loaded tickers. Unavailable symbols are excluded from charts and calculations.")
+
+
+def display_order_preview(preview):
+    """Render a compact order preview dictionary."""
+    items = [
+        ("Trade value", _fmt_money(preview.get("trade_value", 0.0))),
+        ("Estimated fee", _fmt_money(preview.get("fee", 0.0))),
+        ("Cash after", _fmt_money(preview.get("cash_after", 0.0))),
+        ("Shares after", f"{preview.get('shares_after', 0):,}"),
+        ("Exposure after", _fmt_pct(preview.get("exposure_after", 0.0))),
+    ]
+    if preview.get("action") == "SELL":
+        items.append(("Realized P&L", _fmt_money(preview.get("realized_pnl", 0.0))))
+
+    cells = []
+    for label, value in items:
+        cells.append(
+            "<div class='qma-preview-item'>"
+            f"<div class='qma-preview-label'>{html.escape(str(label))}</div>"
+            f"<div class='qma-preview-value'>{html.escape(str(value))}</div>"
+            "</div>"
+        )
+    st.markdown(f"<div class='qma-order-preview'>{''.join(cells)}</div>", unsafe_allow_html=True)
+    if not preview.get("can_execute", False):
+        st.caption(preview.get("reason", "Order cannot be executed."))
+
+
+def periods_per_year(interval):
+    """Return annualization periods for the selected data interval."""
+    return {
+        "1d": TRADING_DAYS_PER_YEAR,
+        "1h": TRADING_DAYS_PER_YEAR * HOURS_PER_TRADING_DAY,
+        "15m": TRADING_DAYS_PER_YEAR * HOURS_PER_TRADING_DAY * 4,
+        "5m": TRADING_DAYS_PER_YEAR * HOURS_PER_TRADING_DAY * 12,
+        "1m": TRADING_DAYS_PER_YEAR * HOURS_PER_TRADING_DAY * 60,
+    }.get(interval, TRADING_DAYS_PER_YEAR)
+
+
+def rolling_sharpe_series(returns, interval="1d", window=63, risk_free_rate=0.02):
+    """Compute rolling annualized Sharpe ratio."""
+    returns = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if returns.empty:
+        return pd.Series(dtype=float)
+
+    periods = periods_per_year(interval)
+    excess = returns - (risk_free_rate / periods)
+    rolling_std = returns.rolling(window).std()
+    sharpe = (excess.rolling(window).mean() / rolling_std.replace(0, np.nan)) * np.sqrt(periods)
+    return sharpe.replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def rolling_volatility_series(returns, interval="1d", window=63):
+    """Compute rolling annualized volatility in percent."""
+    returns = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if returns.empty:
+        return pd.Series(dtype=float)
+
+    vol = returns.rolling(window).std() * np.sqrt(periods_per_year(interval)) * 100
+    return vol.replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def drawdown_duration_stats(equity):
+    """Return max and current drawdown duration measured in data periods."""
+    equity = pd.to_numeric(equity, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if equity.empty:
+        return 0, 0
+
+    underwater = equity < equity.cummax()
+    current = 0
+    max_duration = 0
+    for is_underwater in underwater:
+        current = current + 1 if is_underwater else 0
+        max_duration = max(max_duration, current)
+
+    return max_duration, current
+
+
+def monthly_returns_matrix(returns):
+    """Return a year x month matrix of compounded monthly returns in percent."""
+    returns = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if returns.empty:
+        return pd.DataFrame()
+
+    monthly = (1 + returns).resample("M").prod() - 1
+    monthly_df = pd.DataFrame({
+        "year": monthly.index.year,
+        "month": monthly.index.month,
+        "return": monthly.values * 100,
+    })
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    matrix = monthly_df.pivot(index="year", columns="month", values="return")
+    return matrix.reindex(columns=range(1, 13)).rename(columns={i + 1: month for i, month in enumerate(month_names)})
+
+
+def display_monthly_heatmap(returns, title="Monthly Returns"):
+    """Display a compact monthly returns heatmap."""
+    matrix = monthly_returns_matrix(returns)
+    if matrix.empty:
+        st.info("Not enough return history for a monthly heatmap.")
+        return
+
+    fig = go.Figure(data=go.Heatmap(
+        z=matrix.values,
+        x=matrix.columns,
+        y=matrix.index.astype(str),
+        colorscale="RdYlGn",
+        zmid=0,
+        colorbar=dict(title="%"),
+        hovertemplate="%{y} %{x}: %{z:.2f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        title=title,
+        height=320,
+        template=get_plotly_template(st.session_state.get('theme', 'dark')),
+        xaxis_title="Month",
+        yaxis_title="Year",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def display_rolling_risk_charts(returns, interval="1d", title_prefix="Strategy"):
+    """Display rolling Sharpe and rolling volatility charts."""
+    returns = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if len(returns) < 10:
+        st.info("Not enough return history for rolling risk charts.")
+        return
+
+    window = min(63, max(10, len(returns) // 3))
+    rolling_sharpe = rolling_sharpe_series(returns, interval=interval, window=window)
+    rolling_vol = rolling_volatility_series(returns, interval=interval, window=window)
+
+    fig = sp.make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=(f"{title_prefix} Rolling Sharpe", f"{title_prefix} Rolling Volatility"),
+    )
+    if not rolling_sharpe.empty:
+        fig.add_trace(go.Scatter(x=rolling_sharpe.index, y=rolling_sharpe.values, name="Rolling Sharpe"), row=1, col=1)
+    if not rolling_vol.empty:
+        fig.add_trace(go.Scatter(x=rolling_vol.index, y=rolling_vol.values, name="Rolling Volatility"), row=2, col=1)
+
+    fig.update_layout(
+        height=480,
+        template=get_plotly_template(st.session_state.get('theme', 'dark')),
+        hovermode="x unified",
+    )
+    fig.update_yaxes(title_text="Sharpe", row=1, col=1)
+    fig.update_yaxes(title_text="Volatility (%)", row=2, col=1)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def display_strategy_assumptions(config, interval, starting_capital=100, risk_free_rate=0.02):
+    """Show plain-language assumptions behind a strategy run."""
+    render_status_strip([
+        ("Fees", f"{config.get('fee_pct', 0) * 100:.2f}% per trade"),
+        ("Interval", interval),
+        ("Starting Capital", _fmt_money(starting_capital)),
+        ("Risk-Free Rate", f"{risk_free_rate * 100:.1f}%"),
+        ("Position Sizing", str(config.get('position_type', 'Fixed'))),
+        ("Hold Days", config.get('holding_period', 0)),
+    ])
+
+
+def display_strategy_analytics(backtest_data, close, interval, config, benchmark_close=None, benchmark_label="SPY"):
+    """Display strategy comparison, risk context, and return distribution views."""
+    if not backtest_data or "equity" not in backtest_data:
+        return
+    config = config or {}
+
+    equity = backtest_data["equity"].dropna()
+    if equity.empty:
+        return
+
+    aligned_close = close.reindex(equity.index).dropna()
+    strategy_equity = equity.reindex(aligned_close.index).dropna()
+    if strategy_equity.empty:
+        return
+    buy_hold = buy_hold_equity(aligned_close, initial_equity=float(strategy_equity.iloc[0])) if not aligned_close.empty else pd.Series(dtype=float)
+
+    st.markdown("**Strategy Comparison**")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=strategy_equity.index, y=strategy_equity.values, name="Strategy", line=dict(width=2)))
+    if not buy_hold.empty:
+        fig.add_trace(go.Scatter(x=buy_hold.index, y=buy_hold.values, name=f"{aligned_close.name or 'Ticker'} Buy & Hold", line=dict(dash="dash")))
+
+    if benchmark_close is not None and not benchmark_close.empty:
+        benchmark_aligned = benchmark_close.reindex(strategy_equity.index).dropna()
+        benchmark_equity = buy_hold_equity(benchmark_aligned, initial_equity=float(strategy_equity.iloc[0]))
+        if not benchmark_equity.empty:
+            fig.add_trace(go.Scatter(x=benchmark_equity.index, y=benchmark_equity.values, name=f"{benchmark_label} Benchmark", line=dict(dash="dot")))
+
+    fig.update_layout(
+        height=420,
+        yaxis_title="Equity",
+        template=get_plotly_template(st.session_state.get('theme', 'dark')),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    max_duration, current_duration = drawdown_duration_stats(strategy_equity)
+    st.caption(
+        f"Max drawdown duration: {max_duration} periods. Current drawdown duration: {current_duration} periods."
+    )
+
+    display_strategy_assumptions(config, interval)
+    display_rolling_risk_charts(backtest_data.get("daily_return", pd.Series(dtype=float)), interval=interval)
+    display_monthly_heatmap(backtest_data.get("daily_return", pd.Series(dtype=float)), title="Strategy Monthly Returns")
+
+
 # ============================================================================
 # DISPLAY FUNCTIONS
 # ============================================================================
@@ -188,10 +533,10 @@ def display_metrics_panel(metrics):
     metric_cols = st.columns(4)
     
     specs = [
-        ("📈 Total Return", f"{metrics['total_return']:.2f}%", "good" if metrics['total_return'] > 0 else "bad"),
-        ("⚖️ Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}", "good" if metrics['sharpe_ratio'] > 1 else "neutral"),
-        ("📉 Max Drawdown", f"{metrics['max_drawdown']:.2f}%", "bad" if metrics['max_drawdown'] < -10 else "neutral"),
-        ("🎯 Win Rate", f"{metrics['win_rate']:.1f}%", "good" if metrics['win_rate'] > 50 else "neutral"),
+        ("Total Return", f"{metrics['total_return']:.2f}%", "good" if metrics['total_return'] > 0 else "bad"),
+        ("Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}", "good" if metrics['sharpe_ratio'] > 1 else "neutral"),
+        ("Max Drawdown", f"{metrics['max_drawdown']:.2f}%", "bad" if metrics['max_drawdown'] < -10 else "neutral"),
+        ("Win Rate", f"{metrics['win_rate']:.1f}%", "good" if metrics['win_rate'] > 50 else "neutral"),
     ]
     
     for col, (label, value, delta_color) in zip(metric_cols, specs):
@@ -201,10 +546,10 @@ def display_metrics_panel(metrics):
 def display_trade_log(backtest_data, strategy_name):
     """Show trade details and export option."""
     if not backtest_data or 'trades' not in backtest_data or len(backtest_data['trades']) == 0:
-        st.info("ℹ️ No trades executed in backtest period.")
+        st.info("No trades executed in backtest period.")
         return
     
-    st.subheader("📋 Trade Log")
+    st.subheader("Trade Log")
     
     trades = backtest_data['trades']
     trades_df = pd.DataFrame(trades)
@@ -225,14 +570,29 @@ def display_trade_log(backtest_data, strategy_name):
         display_df['exit_price'] = display_df['exit_price'].apply(lambda x: f"${float(x):.2f}" if pd.notna(x) else "N/A")
     if 'return_pct' in display_df.columns:
         display_df['return_pct'] = display_df['return_pct'].apply(lambda x: f"{float(x):.2f}%" if pd.notna(x) else "N/A")
+    if 'fees_pct' in display_df.columns:
+        display_df['fees_pct'] = display_df['fees_pct'].apply(lambda x: f"{float(x):.2f}%" if pd.notna(x) else "N/A")
     
     # Only include columns that exist
-    available_columns = ['entry_date', 'entry_price', 'exit_date', 'exit_price', 'return_pct']
+    available_columns = [
+        'entry_date', 'exit_date', 'entry_reason', 'exit_reason',
+        'holding_periods', 'entry_price', 'exit_price', 'return_pct', 'fees_pct'
+    ]
     display_columns = [col for col in available_columns if col in display_df.columns]
     display_df = display_df[display_columns]
     
-    column_names = ['Entry Date', 'Entry Price', 'Exit Date', 'Exit Price', 'Return %']
-    display_df.columns = column_names[:len(display_columns)]
+    column_names = {
+        'entry_date': 'Entry Date',
+        'exit_date': 'Exit Date',
+        'entry_reason': 'Entry Reason',
+        'exit_reason': 'Exit Reason',
+        'holding_periods': 'Holding Time',
+        'entry_price': 'Entry Price',
+        'exit_price': 'Exit Price',
+        'return_pct': 'Return',
+        'fees_pct': 'Fees',
+    }
+    display_df.columns = [column_names[col] for col in display_columns]
     
     st.dataframe(display_df, use_container_width=True, hide_index=True)
     
@@ -256,19 +616,19 @@ def display_trade_log(backtest_data, strategy_name):
         if win_returns:
             avg_win = np.mean(win_returns)
             max_win = max(win_returns)
-            st.write(f"**📈 Wins:** Avg {avg_win:.2f}% | Max {max_win:.2f}%")
+            st.write(f"**Wins:** Avg {avg_win:.2f}% | Max {max_win:.2f}%")
     
     if losing_trades:
         loss_returns = [t.get('return_pct', 0) for t in losing_trades if t.get('return_pct') is not None]
         if loss_returns:
             avg_loss = np.mean(loss_returns)
             max_loss = min(loss_returns)
-            st.write(f"**📉 Losses:** Avg {avg_loss:.2f}% | Max {max_loss:.2f}%")
+            st.write(f"**Losses:** Avg {avg_loss:.2f}% | Max {max_loss:.2f}%")
     
     # Export button
     csv_data = trades_df.to_csv(index=False)
     st.download_button(
-        "📥 Download Trades (CSV)",
+        "Download Trades (CSV)",
         csv_data,
         f"trades_{strategy_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         "text/csv",
@@ -278,7 +638,7 @@ def display_trade_log(backtest_data, strategy_name):
 
 def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_signals=None):
     """Show candlestick chart with indicators and equity curve."""
-    df = data.xs(selected_ticker, level=1, axis=1) if len(data.columns.names) > 1 else data
+    df = get_ticker_frame(data, selected_ticker)
     price = df["Close"]
     
     # Compute indicators
@@ -324,6 +684,8 @@ def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_s
     if backtest_data is not None and backtest_signals is not None:
         entries_idx = backtest_signals['entries'][backtest_signals['entries'] > 0].index
         exits_idx = backtest_signals['exits'][backtest_signals['exits'] > 0].index
+        entries_idx = entries_idx.intersection(df.index)
+        exits_idx = exits_idx.intersection(df.index)
         
         if len(entries_idx) > 0:
             entry_lows = df.loc[entries_idx, "Low"]
@@ -362,7 +724,12 @@ def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_s
         equity = backtest_data['equity']
         # Use the full price series for buy & hold calculation, aligned with equity dates
         try:
-            bh_equity = buy_hold_equity(price.loc[equity.index], initial_equity=100)
+            aligned_index = equity.index.intersection(price.index)
+            equity = equity.reindex(aligned_index).dropna()
+            aligned_price = price.reindex(aligned_index).dropna()
+            if equity.empty or aligned_price.empty:
+                raise ValueError("Backtest equity is not aligned with selected price data")
+            bh_equity = buy_hold_equity(aligned_price, initial_equity=100)
             
             fig.add_trace(
                 go.Scatter(x=equity.index, y=equity.values, name="Strategy", line=dict(color="blue", width=2)),
@@ -378,7 +745,7 @@ def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_s
     
     # Layout
     current_theme = st.session_state.get('theme', 'dark')
-    template = 'plotly_white' if current_theme == 'light' else 'plotly_dark'
+    template = get_plotly_template(current_theme)
     
     fig.update_layout(
         height=900 if num_rows == 4 else 1100,
@@ -406,7 +773,7 @@ def main():
         # Initialize session state with validation
         required_session_keys = [
             'backtest_cache', 'show_welcome', 'ui_mode', 'theme', 'mode',
-            'ticker_input', 'simulator'
+            'ticker_input', 'data_source', 'simulator'
         ]
 
         for key in required_session_keys:
@@ -423,6 +790,8 @@ def main():
                     st.session_state.mode = 'backtesting'
                 elif key == 'ticker_input':
                     st.session_state.ticker_input = DEFAULT_TICKERS
+                elif key == 'data_source':
+                    st.session_state.data_source = DEFAULT_DATA_SOURCE
                 elif key == 'simulator':
                     st.session_state.simulator = {
                         'active': False,
@@ -431,6 +800,8 @@ def main():
                         'total_steps': 0,
                         'is_playing': False
                     }
+
+        apply_app_theme(st.session_state.get('theme', 'dark'))
 
         # Show welcome dashboard if needed
         if st.session_state.show_welcome:
@@ -441,8 +812,8 @@ def main():
         show_main_dashboard()
 
     except Exception as e:
-        st.error(f"❌ Application error: {str(e)}")
-        st.info("💡 Please refresh the page to restart the application.")
+        st.error(f"Application error: {str(e)}")
+        st.info("Please refresh the page to restart the application.")
         with st.expander("Debug Information"):
             st.code(f"Error: {str(e)}")
             st.code(traceback.format_exc())
@@ -456,205 +827,265 @@ def show_simulator_mode(data, selected_ticker, start, end, interval):
         simulator = get_simulator_engine()
 
         # Simulator settings
-        st.subheader("🎮 Trading Simulator")
+        st.subheader("Simulator")
+
+        if not st.session_state.simulator.get('autostarted'):
+            st.session_state.simulator['active'] = True
+            st.session_state.simulator['autostarted'] = True
 
         # Simulator controls
         simulator_active = st.toggle(
-            "🎮 Activate Simulator",
+            "Simulator On",
             value=st.session_state.simulator.get('active', False),
-            help="Enable manual trading simulation"
+            help="Turn the manual trading simulator on or off"
         )
 
         if simulator_active:
             st.session_state.simulator['active'] = True
 
-            # Simulator settings in a more organized layout
-            st.markdown("### ⚙️ Simulation Settings")
-
-            # Date range selection
-            col1, col2 = st.columns(2)
-            with col1:
-                sim_start = st.date_input(
-                    "📅 Start Date",
-                    value=start,
-                    key="sim_start",
-                    help="When your trading simulation begins"
-                )
-            with col2:
-                sim_end = st.date_input(
-                    "📅 End Date",
-                    value=end,
-                    key="sim_end",
-                    help="When your trading simulation ends"
-                )
-
-            # Capital and fees
-            col1, col2 = st.columns(2)
-            with col1:
-                initial_equity = st.number_input(
-                    "💰 Starting Capital ($)",
-                    value=10000,
-                    min_value=1000,
-                    max_value=1000000,
-                    step=1000,
-                    help="How much money you start with"
-                )
-            with col2:
-                sim_fee = st.slider(
-                    "💸 Transaction Fee (%)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.1,
-                    step=0.01,
-                    help="Cost per trade (realistic trading costs)"
-                ) / 100
+            setup_expanded = not hasattr(simulator, 'sim_data') or simulator.sim_data is None
+            with st.expander("Simulation Setup", expanded=setup_expanded):
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    sim_start = st.date_input(
+                        "Start Date",
+                        value=start,
+                        key="sim_start",
+                        help="When your trading simulation begins"
+                    )
+                with col2:
+                    sim_end = st.date_input(
+                        "End Date",
+                        value=end,
+                        key="sim_end",
+                        help="When your trading simulation ends"
+                    )
+                with col3:
+                    initial_equity = st.number_input(
+                        "Starting Capital ($)",
+                        value=10000,
+                        min_value=1000,
+                        max_value=1000000,
+                        step=1000,
+                        help="How much money you start with"
+                    )
+                with col4:
+                    sim_fee = st.slider(
+                        "Fee (%)",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.1,
+                        step=0.01,
+                        help="Cost per trade (realistic trading costs)"
+                    ) / 100
 
             # Initialize simulator with settings
-            if not hasattr(simulator, 'sim_data') or simulator.sim_data is None:
+            sim_config_key = (
+                selected_ticker,
+                str(sim_start),
+                str(sim_end),
+                interval,
+                float(initial_equity),
+                round(float(sim_fee), 6),
+            )
+            needs_init = (
+                not hasattr(simulator, 'sim_data')
+                or simulator.sim_data is None
+                or st.session_state.simulator.get('config_key') != sim_config_key
+            )
+            if needs_init:
                 try:
                     # Get data for the selected ticker
-                    sim_data = download_data([selected_ticker], sim_start, sim_end, interval)
+                    sim_data = load_data_with_status([selected_ticker], sim_start, sim_end, interval)
 
                     if len(sim_data) > 0:
                         simulator.reset()
                         simulator.transaction_fee = sim_fee
                         simulator.initial_equity = initial_equity
                         simulator.set_timeframe(sim_data, sim_start, sim_end)
-                        st.success(f"🎯 **Simulation Ready!** Trading **{selected_ticker}** from {sim_start.strftime('%B %d, %Y')} to {sim_end.strftime('%B %d, %Y')} with ${initial_equity:,.0f} starting capital")
-                        st.info("💡 Use the Trading Panel below to buy and sell shares. Navigate through time to practice your trading strategy!")
+                        st.session_state.simulator['config_key'] = sim_config_key
+                        st.success(f"Simulation ready for {selected_ticker} with ${initial_equity:,.0f} starting capital.")
                     else:
-                        st.error("❌ No data available for the selected period")
+                        st.error("No data available for the selected period")
                         simulator_active = False
 
                 except Exception as e:
-                    st.error(f"❌ Failed to initialize simulator: {e}")
+                    st.error(f"Failed to initialize simulator: {e}")
                     simulator_active = False
 
             # Trading controls
             if simulator_active and hasattr(simulator, 'sim_data'):
-                st.markdown("---")
+                if 'simulator_last_message' in st.session_state:
+                    st.success(st.session_state.simulator_last_message)
+                    del st.session_state.simulator_last_message
 
-                # Current state display - prominent metrics
-                st.markdown("### 📊 Current Position")
                 state = simulator.get_current_state()
+                current_price = float(state.get('price') or 0.0)
+                shares_held = int(state.get('shares', 0))
 
-                # Main metrics in a nice grid
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("📅 Current Date", state['date'].strftime('%Y-%m-%d'))
-                with col2:
-                    st.metric("💰 Available Cash", f"${state['cash']:.2f}")
-                with col3:
-                    st.metric("📊 Shares Held", state['positions'])
-                with col4:
-                    st.metric("💎 Total Equity", f"${state['total_equity']:.2f}")
+                render_status_strip([
+                    ("Date", state['date'].strftime('%Y-%m-%d')),
+                    ("Cash", _fmt_money(state['cash'])),
+                    ("Shares", f"{shares_held:,}"),
+                    ("Equity", _fmt_money(state['total_equity'])),
+                    ("Price", _fmt_money(current_price)),
+                ])
 
-                # Current price display
-                if hasattr(simulator, 'current_price'):
-                    st.metric("📈 Current Price", f"${simulator.current_price:.2f}")
-
-                st.markdown("---")
-
-                # Trading Panel
-                st.markdown("### 🏪 Trading Panel")
+                st.markdown("<div class='qma-section-title'>Trading Panel</div>", unsafe_allow_html=True)
 
                 # Buy/Sell section with better layout
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    st.markdown("#### 🟢 BUY")
+                    st.markdown("**Buy**")
+                    max_affordable_qty = simulator.max_affordable_quantity()
+                    buy_size_mode = st.radio(
+                        "Buy Size",
+                        ["Max", "50% Cash", "25% Cash", "10% Cash", "Custom"],
+                        horizontal=True,
+                        key="buy_size_mode",
+                    )
+                    buy_fraction_by_mode = {
+                        "Max": 1.0,
+                        "50% Cash": 0.50,
+                        "25% Cash": 0.25,
+                        "10% Cash": 0.10,
+                    }
+                    buy_default = min(max_affordable_qty, 100)
+                    if buy_size_mode in buy_fraction_by_mode:
+                        buy_default = simulator.quantity_for_cash_fraction(buy_fraction_by_mode[buy_size_mode])
+                        st.session_state.buy_qty = buy_default
+                    if st.session_state.get("buy_qty", buy_default) > max_affordable_qty:
+                        st.session_state.buy_qty = buy_default
+                    st.caption(f"Max affordable shares: {max_affordable_qty:,}")
                     buy_qty = st.number_input(
                         "Quantity to Buy",
-                        min_value=1,
-                        max_value=10000,
-                        value=100,
-                        step=10,
+                        min_value=0,
+                        max_value=max(max_affordable_qty, 1),
+                        value=buy_default,
+                        step=1,
+                        disabled=max_affordable_qty == 0,
                         key="buy_qty"
                     )
-                    buy_cost = buy_qty * simulator.current_price if hasattr(simulator, 'current_price') else 0
-                    st.info(f"Cost: ${buy_cost:.2f}")
+                    buy_preview = simulator.preview_buy(buy_qty)
+                    display_order_preview(buy_preview)
 
-                    if st.button("🟢 EXECUTE BUY", type="primary", use_container_width=True):
+                    if st.button(
+                        "Execute Buy",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=not buy_preview["can_execute"],
+                    ):
                         if simulator.execute_buy(buy_qty):
-                            price_str = f"${simulator.current_price:.2f}" if hasattr(simulator, 'current_price') else "N/A"
-                            st.success(f"✅ Bought {buy_qty} shares at {price_str}")
+                            st.session_state.simulator_last_message = (
+                                f"Bought {buy_qty:,} shares at {_fmt_money(current_price)}. "
+                                f"Cash is now {_fmt_money(buy_preview['cash_after'])}; "
+                                f"shares held: {buy_preview['shares_after']:,}; "
+                                f"exposure: {_fmt_pct(buy_preview['exposure_after'])}."
+                            )
                             st.rerun()
                         else:
                             can_buy, reason = simulator.can_buy(buy_qty)
-                            st.error(f"❌ {reason}")
+                            st.error(reason)
 
                 with col2:
-                    st.markdown("#### 🔴 SELL")
+                    st.markdown("**Sell**")
+                    if shares_held == 0:
+                        st.caption("No shares are currently held.")
+                    else:
+                        st.caption(f"Shares available to sell: {shares_held:,}")
+                    sell_size_mode = st.radio(
+                        "Sell Size",
+                        ["All", "50% Position", "25% Position", "Custom"],
+                        horizontal=True,
+                        key="sell_size_mode",
+                        disabled=shares_held == 0,
+                    )
+                    sell_fraction_by_mode = {
+                        "All": 1.0,
+                        "50% Position": 0.50,
+                        "25% Position": 0.25,
+                    }
+                    sell_default = min(shares_held, 100)
+                    if sell_size_mode in sell_fraction_by_mode:
+                        sell_default = shares_held if sell_size_mode == "All" else max(1, int(shares_held * sell_fraction_by_mode[sell_size_mode]))
+                        st.session_state.sell_qty = sell_default
+                    if st.session_state.get("sell_qty", sell_default) > shares_held:
+                        st.session_state.sell_qty = sell_default
                     sell_qty = st.number_input(
                         "Quantity to Sell",
-                        min_value=1,
-                        max_value=10000,
-                        value=100,
-                        step=10,
+                        min_value=0,
+                        max_value=max(shares_held, 1),
+                        value=sell_default,
+                        step=1,
+                        disabled=shares_held == 0,
                         key="sell_qty"
                     )
-                    sell_value = sell_qty * simulator.current_price if hasattr(simulator, 'current_price') else 0
-                    st.info(f"Value: ${sell_value:.2f}")
+                    sell_preview = simulator.preview_sell(sell_qty)
+                    display_order_preview(sell_preview)
 
-                    if st.button("🔴 EXECUTE SELL", type="primary", use_container_width=True):
+                    if st.button(
+                        "Execute Sell",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=shares_held == 0 or not sell_preview["can_execute"],
+                    ):
                         if simulator.execute_sell(sell_qty):
-                            price_str = f"${simulator.current_price:.2f}" if hasattr(simulator, 'current_price') else "N/A"
-                            st.success(f"✅ Sold {sell_qty} shares at {price_str}")
+                            st.session_state.simulator_last_message = (
+                                f"Sold {sell_qty:,} shares at {_fmt_money(current_price)}. "
+                                f"Cash is now {_fmt_money(sell_preview['cash_after'])}; "
+                                f"shares held: {sell_preview['shares_after']:,}; "
+                                f"realized P&L: {_fmt_money(sell_preview['realized_pnl'])}."
+                            )
                             st.rerun()
                         else:
                             can_sell, reason = simulator.can_sell(sell_qty)
-                            st.error(f"❌ {reason}")
-
-                st.markdown("---")
+                            st.error(reason)
 
                 # Time Navigation Panel
-                st.markdown("### ⏰ Time Navigation")
+                st.markdown("<div class='qma-section-title'>Time Navigation</div>", unsafe_allow_html=True)
 
                 time_col1, time_col2, time_col3, time_col4, time_col5 = st.columns(5)
 
                 with time_col1:
-                    if st.button("⏮️ START", help="Go to beginning", use_container_width=True):
+                    nav_step = st.selectbox("Step", [1, 5, 20], index=0, help="Number of bars to move per click")
+
+                with time_col2:
+                    if st.button("Start", help="Go to beginning", use_container_width=True):
                         simulator.go_to_date(simulator.sim_data.index[0])
                         st.rerun()
 
-                with time_col2:
-                    if st.button("◀️ -1 DAY", help="Go back 1 day", use_container_width=True):
-                        if simulator.advance_time(-1):
+                with time_col3:
+                    if st.button("Back", help="Go back by the selected step", use_container_width=True):
+                        if simulator.advance_time(-int(nav_step)):
                             st.rerun()
                         else:
                             st.info("Already at start")
 
-                with time_col3:
-                    if st.button("▶️ +1 DAY", help="Advance 1 day", use_container_width=True):
-                        if simulator.advance_time(1):
-                            st.rerun()
-                        else:
-                            st.info("End of simulation reached")
-
                 with time_col4:
-                    if st.button("⏭️ +5 DAYS", help="Advance 5 days", use_container_width=True):
-                        if simulator.advance_time(5):
+                    if st.button("Next", help="Advance by the selected step", use_container_width=True):
+                        if simulator.advance_time(int(nav_step)):
                             st.rerun()
                         else:
                             st.info("End of simulation reached")
 
                 with time_col5:
-                    if st.button("🔄 RESET", type="secondary", help="Reset simulation", use_container_width=True):
+                    confirm_reset = st.checkbox("Confirm reset", key="sim_reset_confirm")
+                    if st.button(
+                        "Reset",
+                        type="secondary",
+                        help="Reset simulation",
+                        use_container_width=True,
+                        disabled=not confirm_reset,
+                    ):
                         reset_simulator()
                         st.rerun()
         else:
             st.session_state.simulator['active'] = False
-            st.info("🎮 **Ready to start trading?** Toggle 'Activate Simulator' above to begin your trading simulation!")
-            st.markdown("""
-            **What you can do:**
-            - Practice buying and selling stocks
-            - Learn trading without risking real money
-            - Test different strategies over historical data
-            - Track your performance in real-time
-            """)
+            st.info("Turn the simulator on to practice manual orders against the selected historical window.")
 
     except Exception as e:
-        st.error(f"❌ Simulator mode error: {e}")
+        st.error(f"Simulator mode error: {e}")
         with st.expander("Debug Information"):
             st.code(f"Error: {str(e)}")
             st.code(traceback.format_exc())
@@ -664,7 +1095,7 @@ def display_simulator_chart(data, selected_ticker):
     """Display simulator chart with trades."""
     try:
         if not hasattr(st.session_state.simulator['engine'], 'sim_data') or st.session_state.simulator['engine'].sim_data is None:
-            st.info("💡 Activate the simulator to see the trading chart")
+            st.info("Activate the simulator to see the trading chart")
             return
 
         simulator = st.session_state.simulator['engine']
@@ -696,9 +1127,13 @@ def display_simulator_chart(data, selected_ticker):
         )
 
         # Add trade markers
-        if hasattr(simulator, 'trades') and simulator.trades:
-            buy_trades = pd.DataFrame([t for t in simulator.trades if t['action'] == 'BUY'])
-            sell_trades = pd.DataFrame([t for t in simulator.trades if t['action'] == 'SELL'])
+        orders = getattr(simulator, 'orders', [])
+        if not orders and hasattr(simulator, 'trades'):
+            orders = simulator.trades
+
+        if orders:
+            buy_trades = pd.DataFrame([t for t in orders if t.get('action') == 'BUY'])
+            sell_trades = pd.DataFrame([t for t in orders if t.get('action') == 'SELL'])
 
             if not buy_trades.empty:
                 fig.add_trace(
@@ -751,7 +1186,7 @@ def display_simulator_chart(data, selected_ticker):
 
         # Get current theme
         current_theme = st.session_state.get('theme', 'dark')
-        template = 'plotly_white' if current_theme == 'light' else 'plotly_dark'
+        template = get_plotly_template(current_theme)
 
         fig.update_layout(height=600, showlegend=True, template=template)
         fig.update_xaxes(title_text="Date", row=2, col=1)
@@ -761,18 +1196,18 @@ def display_simulator_chart(data, selected_ticker):
         st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        st.error(f"❌ Chart display error: {e}")
+        st.error(f"Chart display error: {e}")
 
 
 def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_portfolio, portfolio_weight_input, rebalance_period, enable_risk, stop_loss_pct, take_profit_pct, enable_optimizer, optimizer_strategy, optimizer_strat_hold, optimizer_strat_fee):
     """Handle backtesting mode logic."""
     try:
-        st.subheader("🤖 Backtesting")
+        st.subheader("Backtesting")
 
         # Get data for selected ticker
         ticker_data = extract_ticker_data(data, selected_ticker, start, end)
         if ticker_data.empty:
-            st.error("❌ No data available for backtesting")
+            st.error("No data available for backtesting")
             return
 
         close = ticker_data["Close"]
@@ -788,7 +1223,7 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
         if strategy_name != "None":
             # Quick presets
             preset = st.selectbox(
-                "📋 Quick Presets",
+                "Quick Presets",
                 ["Custom"] + list(TRADING_PRESETS.keys()),
                 help="Pre-configured trading styles"
             )
@@ -819,6 +1254,15 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
                     key="backtest_end"
                 )
 
+            if backtest_start >= backtest_end:
+                st.error("Backtest start date must be before end date.")
+                return
+
+            backtest_ticker_data = extract_ticker_data(data, selected_ticker, backtest_start, backtest_end)
+            close = backtest_ticker_data["Close"]
+            close.name = selected_ticker
+            indicators = compute_all_indicators(close)
+
             # Position & fees
             st.markdown("**Position Configuration**")
             col1, col2 = st.columns(2)
@@ -843,7 +1287,7 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
 
             # Advanced options (only in expert mode)
             if st.session_state.ui_mode == 'expert':
-                with st.expander("⚙️ Advanced Options", expanded=False):
+                with st.expander("Advanced Options", expanded=False):
                     transaction_fee = st.slider(
                         "Transaction Fee (%)",
                         min_value=0.0,
@@ -863,6 +1307,30 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
                 transaction_fee = default_fee
                 sharpe_interval = "1d"
 
+            with st.expander("Analytics Options", expanded=False):
+                benchmark_symbol = st.text_input(
+                    "Benchmark",
+                    value=st.session_state.get("benchmark_symbol", "SPY"),
+                    help="Used for strategy comparison. SPY is the default broad-market benchmark.",
+                    key="benchmark_symbol",
+                ).strip().upper() or "SPY"
+                enable_optimizer = st.checkbox("Run strategy optimizer", value=enable_optimizer)
+                if enable_optimizer:
+                    optimizer_strategy = st.selectbox(
+                        "Optimizer Strategy",
+                        [s for s in STRATEGY_OPTIONS if s != "None"],
+                        index=0,
+                        key="backtest_optimizer_strategy",
+                    )
+                    optimizer_strat_fee = st.slider(
+                        "Optimizer Fee (%)",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=optimizer_strat_fee * 100,
+                        step=0.01,
+                        key="backtest_optimizer_fee",
+                    ) / 100
+
             config = {
                 'position_type': position_type,
                 'holding_period': int(holding_period),
@@ -871,7 +1339,7 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
             }
 
             # Run backtest button
-            if st.button("🚀 Run Backtest", type="primary"):
+            if st.button("Run Backtest", type="primary"):
                 with st.spinner("Running backtest..."):
                     try:
                         # Run backtest
@@ -881,36 +1349,84 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
                         # Store results in session state
                         st.session_state.backtest_result = backtest_result
                         st.session_state.backtest_metrics = backtest_metrics
+                        st.session_state.backtest_close = close
+                        st.session_state.backtest_config = config
+                        st.session_state.strategy_name = strategy_name
+                        st.session_state.backtest_strategy_name = strategy_name
+                        st.session_state.backtest_ticker = selected_ticker
+                        st.session_state.backtest_date_range = (str(backtest_start), str(backtest_end))
+                        st.session_state.backtest_benchmark_symbol = benchmark_symbol
 
-                        st.success("✅ Backtest completed!")
+                        benchmark_close = None
+                        try:
+                            if benchmark_symbol in available_tickers(data):
+                                benchmark_close = get_ticker_frame(data, benchmark_symbol)["Close"]
+                            else:
+                                benchmark_data, benchmark_status = load_market_data(
+                                    [benchmark_symbol],
+                                    backtest_start,
+                                    backtest_end,
+                                    interval,
+                                    source=st.session_state.get("data_source", DEFAULT_DATA_SOURCE),
+                                )
+                                if benchmark_data is not None and not benchmark_data.empty:
+                                    benchmark_close = get_ticker_frame(benchmark_data, benchmark_symbol)["Close"]
+                                    if benchmark_status.get("is_demo"):
+                                        st.caption(f"{benchmark_symbol} benchmark is using demo data.")
+                            st.session_state.backtest_benchmark_close = benchmark_close
+                        except Exception as benchmark_error:
+                            st.session_state.backtest_benchmark_close = None
+                            st.caption(f"Benchmark comparison unavailable: {benchmark_error}")
+
+                        st.success("Backtest completed!")
 
                         # Display metrics
                         display_metrics_panel(backtest_metrics)
 
                         with col2:
-                            st.metric("📅 Period", f"{(end - start).days}d")
+                            st.metric("Period", f"{(backtest_end - backtest_start).days}d")
 
                         st.divider()
 
                         # Trade log
                         display_trade_log(backtest_result, strategy_name)
+                        display_strategy_analytics(
+                            backtest_result,
+                            close,
+                            interval,
+                            config,
+                            benchmark_close=st.session_state.get("backtest_benchmark_close"),
+                            benchmark_label=benchmark_symbol,
+                        )
                         st.divider()
 
                     except Exception as e:
-                        st.error(f"❌ Backtest failed: {e}")
+                        st.error(f"Backtest failed: {e}")
 
             # Display previous results if available
-            if 'backtest_metrics' in st.session_state and st.session_state.backtest_metrics:
-                st.subheader("📊 Backtest Results")
+            stored_result_matches = (
+                st.session_state.get("backtest_ticker") == selected_ticker
+                and st.session_state.get("backtest_strategy_name") == strategy_name
+            )
+            if stored_result_matches and 'backtest_metrics' in st.session_state and st.session_state.backtest_metrics:
+                st.subheader("Backtest Results")
                 display_metrics_panel(st.session_state.backtest_metrics)
 
                 # Trade log
                 if 'backtest_result' in st.session_state:
                     display_trade_log(st.session_state.backtest_result, st.session_state.get('strategy_name', strategy_name))
+                    display_strategy_analytics(
+                        st.session_state.backtest_result,
+                        st.session_state.get("backtest_close", close),
+                        interval,
+                        st.session_state.get("backtest_config", config),
+                        benchmark_close=st.session_state.get("backtest_benchmark_close"),
+                        benchmark_label=st.session_state.get("backtest_benchmark_symbol", "SPY"),
+                    )
 
         # Phase 2: Strategy optimizer results
         if enable_optimizer and optimizer_strategy and strategy_name != 'None':
-            st.subheader('🧪 Strategy Optimizer Results')
+            st.subheader('Strategy Optimizer Results')
             try:
                 param_grid = [
                     {'holding_period': h, 'position_type': 'fixed', 'fee_pct': optimizer_strat_fee}
@@ -933,7 +1449,7 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
                 st.error(f'Optimizer failed: {e}')
 
     except Exception as e:
-        st.error(f"❌ Backtesting mode error: {e}")
+        st.error(f"Backtesting mode error: {e}")
         with st.expander("Debug Information"):
             st.code(f"Error: {str(e)}")
             st.code(traceback.format_exc())
@@ -942,17 +1458,17 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
 def show_main_content(data, selected_ticker, start, end, interval, mode, enable_portfolio, portfolio_weight_input, rebalance_period, enable_risk, stop_loss_pct, take_profit_pct, enable_optimizer, optimizer_strategy, optimizer_strat_hold, optimizer_strat_fee):
     """Display main content based on selected mode."""
     try:
-        if mode == "📊 Analysis":
+        if mode == "Analysis":
             show_analysis_mode(data, selected_ticker, start, end, interval)
-        elif mode == "📈 Backtesting":
+        elif mode == "Backtesting":
             show_backtesting_mode(data, selected_ticker, start, end, interval, enable_portfolio, portfolio_weight_input, rebalance_period, enable_risk, stop_loss_pct, take_profit_pct, enable_optimizer, optimizer_strategy, optimizer_strat_hold, optimizer_strat_fee)
-        elif mode == "🎮 Simulator":
+        elif mode == "Simulator":
             show_simulator_mode(data, selected_ticker, start, end, interval)
         else:
-            st.error(f"❌ Unknown mode: {mode}")
+            st.error(f"Unknown mode: {mode}")
 
     except Exception as e:
-        st.error(f"❌ Main content error: {e}")
+        st.error(f"Main content error: {e}")
         with st.expander("Debug Information"):
             st.code(f"Error: {str(e)}")
             st.code(traceback.format_exc())
@@ -961,10 +1477,10 @@ def show_main_content(data, selected_ticker, start, end, interval, mode, enable_
 def show_analysis_mode(data, selected_ticker, start, end, interval):
     """Handle analysis mode logic with stock discovery."""
     try:
-        st.subheader("🔍 Stock Discovery & Analysis")
+        st.subheader("Stock Discovery & Analysis")
 
         # Stock search section
-        st.markdown("### 🔎 Find Stocks")
+        st.markdown("### Find Stocks")
         
         # Search functionality
         search_col1, search_col2 = st.columns([3, 1])
@@ -976,7 +1492,7 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
             )
         
         with search_col2:
-            if st.button("🔍 Search", type="secondary"):
+            if st.button("Search", type="secondary"):
                 if search_query:
                     with st.spinner("Searching..."):
                         try:
@@ -993,7 +1509,7 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
 
         # Display search results
         if 'search_results' in st.session_state and st.session_state.search_results:
-            st.markdown("### 📋 Search Results")
+            st.markdown("### Search Results")
             
             # Create a table of results
             results_df = pd.DataFrame(st.session_state.search_results)
@@ -1030,7 +1546,7 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
                         st.session_state.selected_analysis_ticker = selected_ticker
 
         # Popular stocks section
-        st.markdown("### ⭐ Popular Stocks")
+        st.markdown("### Popular Stocks")
         try:
             popular_symbols = get_popular_stocks()
             if popular_symbols:
@@ -1066,13 +1582,13 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
         
         if selected_ticker:
             st.markdown("---")
-            st.markdown("### ⚙️ Technical Analysis Settings")
+            st.markdown("### Technical Analysis Settings")
 
             # Indicator selection
             col1, col2 = st.columns(2)
             with col1:
                 selected_indicators = st.multiselect(
-                    "📈 Technical Indicators",
+                    "Technical Indicators",
                     ["SMA", "EMA", "RSI", "MACD", "Bollinger Bands", "Volume"],
                     default=["SMA", "RSI"],
                     help="Select indicators to display on the chart"
@@ -1080,21 +1596,21 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
 
             with col2:
                 chart_type = st.selectbox(
-                    "📊 Chart Type",
+                    "Chart Type",
                     ["Candlestick", "Line", "OHLC"],
                     index=0,
                     help="Choose how to display price data"
                 )
 
             # Generate analysis
-            if st.button("🔍 Run Analysis", type="primary"):
+            if st.button("Run Analysis", type="primary"):
                 with st.spinner("Analyzing data..."):
                     try:
                         # Get data for selected ticker
-                        raw_analysis_data = download_data([selected_ticker], start, end, interval)
+                        raw_analysis_data = load_data_with_status([selected_ticker], start, end, interval)
 
                         if raw_analysis_data is None or len(raw_analysis_data) == 0:
-                            st.error("❌ No data available for analysis")
+                            st.error("No data available for analysis")
                             return
 
                         analysis_data = extract_ticker_data(raw_analysis_data, selected_ticker, start, end)
@@ -1134,34 +1650,34 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
                                 elif indicator == "Volume":
                                     indicators_data["Volume"] = analysis_data["Volume"]
                             except Exception as e:
-                                st.warning(f"⚠️ Could not calculate {indicator}: {e}")
+                                st.warning(f"Could not calculate {indicator}: {e}")
 
                         # Display chart
                         display_analysis_chart(analysis_data, indicators_data, chart_type, selected_indicators)
 
                         # Summary statistics
-                        st.markdown("### 📈 Summary Statistics")
+                        st.markdown("### Summary Statistics")
                         col1, col2, col3, col4 = st.columns(4)
 
                         with col1:
-                            st.metric("📅 Period", f"{len(analysis_data)} days")
+                            st.metric("Period", f"{len(analysis_data)} days")
                         with col2:
                             start_price = analysis_data["Close"].iloc[0]
                             end_price = analysis_data["Close"].iloc[-1]
                             change = ((end_price - start_price) / start_price) * 100
-                            st.metric("📈 Total Return", f"{change:.2f}%")
+                            st.metric("Total Return", f"{change:.2f}%")
                         with col3:
-                            st.metric("💰 Max Price", f"${analysis_data['High'].max():.2f}")
+                            st.metric("Max Price", f"${analysis_data['High'].max():.2f}")
                         with col4:
-                            st.metric("💰 Min Price", f"${analysis_data['Low'].min():.2f}")
+                            st.metric("Min Price", f"${analysis_data['Low'].min():.2f}")
 
                     except Exception as e:
-                        st.error(f"❌ Analysis failed: {e}")
+                        st.error(f"Analysis failed: {e}")
         else:
-            st.info("💡 Select a stock above to begin technical analysis")
+            st.info("Select a stock above to begin technical analysis")
 
     except Exception as e:
-        st.error(f"❌ Analysis mode error: {e}")
+        st.error(f"Analysis mode error: {e}")
         with st.expander("Debug Information"):
             st.code(f"Error: {str(e)}")
             st.code(traceback.format_exc())
@@ -1324,7 +1840,7 @@ def display_analysis_chart(data, indicators, chart_type, selected_indicators):
 
         # Get current theme
         current_theme = st.session_state.get('theme', 'dark')
-        template = 'plotly_white' if current_theme == 'light' else 'plotly_dark'
+        template = get_plotly_template(current_theme)
 
         fig.update_layout(height=600, showlegend=True, template=template)
         fig.update_xaxes(title_text="Date", row=subplot_count, col=1)
@@ -1332,7 +1848,189 @@ def display_analysis_chart(data, indicators, chart_type, selected_indicators):
         st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        st.error(f"❌ Chart display error: {e}")
+        st.error(f"Chart display error: {e}")
+
+
+def parse_portfolio_weights(weight_input, tickers):
+    """Parse portfolio weights from text, defaulting to equal weights."""
+    tickers = [ticker.strip().upper() for ticker in tickers if ticker.strip()]
+    if not tickers:
+        return {}
+
+    if not weight_input.strip():
+        equal_weight = 1 / len(tickers)
+        return {ticker: equal_weight for ticker in tickers}
+
+    weights = {}
+    for item in weight_input.split(","):
+        if ":" not in item:
+            continue
+        symbol, value = item.split(":", 1)
+        symbol = symbol.strip().upper()
+        if symbol:
+            weights[symbol] = float(value.strip())
+
+    if not weights:
+        equal_weight = 1 / len(tickers)
+        return {ticker: equal_weight for ticker in tickers}
+
+    total = sum(weights.values())
+    if total <= 0:
+        raise ValueError("Portfolio weights must sum to a positive value")
+
+    return {symbol: value / total for symbol, value in weights.items()}
+
+
+def show_overview_workflow(data, tickers, selected_ticker, interval):
+    """Show a compact landing workflow with market snapshot and setup state."""
+    st.subheader("Overview")
+
+    loaded_tickers = available_tickers(data)
+    if not loaded_tickers:
+        st.info("Choose at least one valid ticker in the sidebar to begin.")
+        return
+
+    close = get_close_prices(data)
+    close_df = close.to_frame(selected_ticker) if isinstance(close, pd.Series) else close
+    summary_rows = []
+    for ticker in loaded_tickers:
+        if ticker not in close_df.columns:
+            continue
+        prices = pd.to_numeric(close_df[ticker], errors="coerce").dropna()
+        if prices.empty:
+            continue
+        total_return = (prices.iloc[-1] / prices.iloc[0] - 1) * 100 if prices.iloc[0] else 0.0
+        summary_rows.append({
+            "Ticker": ticker,
+            "Last Price": f"${prices.iloc[-1]:.2f}",
+            "Period Return": f"{total_return:.2f}%",
+            "Rows": len(prices),
+        })
+
+    if summary_rows:
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+    st.caption("Use the top workflow selector to move from market context into backtesting, manual simulation, portfolio analysis, or risk review.")
+
+
+def show_portfolio_workflow(data, tickers, interval):
+    """Show portfolio-specific settings and results."""
+    st.subheader("Portfolio")
+    loaded_tickers = available_tickers(data)
+    if len(loaded_tickers) < 2:
+        st.info("Portfolio analysis needs at least two loaded tickers. Add more symbols in the sidebar.")
+        return
+
+    default_weights = ",".join(f"{ticker}:{1 / len(loaded_tickers):.2f}" for ticker in loaded_tickers)
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        weight_input = st.text_input(
+            "Portfolio Weights",
+            value=st.session_state.get("portfolio_weight_input", default_weights),
+            help="Format: AAPL:0.25,MSFT:0.25,SPY:0.50. Values are normalized automatically.",
+            key="portfolio_weight_input",
+        )
+    with col2:
+        rebalance_period = st.selectbox("Rebalance", ["monthly", "weekly", "daily"], index=0)
+
+    try:
+        weights = parse_portfolio_weights(weight_input, loaded_tickers)
+        close = get_close_prices(data)
+        prices = close.to_frame(loaded_tickers[0]) if isinstance(close, pd.Series) else close
+        prices = prices[[ticker for ticker in loaded_tickers if ticker in prices.columns]].dropna(how="all")
+        result = portfolio_backtest(prices, weights, rebalance=rebalance_period)
+
+        render_status_strip([
+            ("Sharpe", f"{result['sharpe_ratio']:.2f}"),
+            ("Max Drawdown", f"{result['max_drawdown']:.2f}%"),
+            ("Win Rate", f"{result['win_rate']:.1f}%"),
+            ("Rebalance", rebalance_period.title()),
+        ])
+
+        weights_df = pd.DataFrame([
+            {"Ticker": ticker, "Weight": f"{weights.get(ticker, 0) * 100:.1f}%"}
+            for ticker in loaded_tickers
+        ])
+        st.dataframe(weights_df, use_container_width=True, hide_index=True)
+
+        nav = result["nav"]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=nav.index, y=nav.values, name="Portfolio NAV", line=dict(width=2)))
+        fig.update_layout(
+            height=420,
+            yaxis_title="NAV",
+            template=get_plotly_template(st.session_state.get('theme', 'dark')),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        display_rolling_risk_charts(result["returns"], interval=interval, title_prefix="Portfolio")
+        display_monthly_heatmap(result["returns"], title="Portfolio Monthly Returns")
+    except Exception as e:
+        st.error(f"Portfolio workflow failed: {e}")
+
+
+def show_risk_workflow(data, selected_ticker, interval):
+    """Show risk metrics and rolling risk charts for the selected ticker."""
+    st.subheader("Risk")
+    try:
+        ticker_data = get_ticker_frame(data, selected_ticker)
+        close = pd.to_numeric(ticker_data["Close"], errors="coerce").dropna()
+        returns = close.pct_change().dropna()
+        if returns.empty:
+            st.info("Not enough price history to calculate risk metrics.")
+            return
+
+        var_95 = value_at_risk(returns, confidence=0.95)
+        cvar_95 = conditional_value_at_risk(returns, confidence=0.95)
+        dd = max_drawdown(close)
+        max_duration, current_duration = drawdown_duration_stats(close)
+
+        render_status_strip([
+            ("VaR 95%", f"{var_95 * 100:.2f}%"),
+            ("CVaR 95%", f"{cvar_95 * 100:.2f}%"),
+            ("Max Drawdown", f"{dd:.2f}%"),
+            ("Max DD Duration", f"{max_duration} periods"),
+            ("Current DD Duration", f"{current_duration} periods"),
+        ])
+        st.caption("VaR estimates a downside threshold. CVaR estimates the average loss after that threshold is breached.")
+
+        stop_loss_pct = st.slider("Stop Loss (%)", min_value=0.0, max_value=20.0, value=5.0, step=0.5)
+        take_profit_pct = st.slider("Take Profit (%)", min_value=0.0, max_value=50.0, value=10.0, step=0.5)
+        st.caption(f"Scenario guardrails: stop loss {stop_loss_pct:.1f}%, take profit {take_profit_pct:.1f}%.")
+
+        display_rolling_risk_charts(returns, interval=interval, title_prefix=selected_ticker)
+        display_monthly_heatmap(returns, title=f"{selected_ticker} Monthly Returns")
+    except Exception as e:
+        st.error(f"Risk workflow failed: {e}")
+
+
+def show_settings_workflow():
+    """Show app preferences in a top-level workflow."""
+    st.subheader("Settings")
+    col1, col2 = st.columns(2)
+    with col1:
+        ui_mode = st.radio(
+            "Interface Mode",
+            ["Simple", "Expert"],
+            index=0 if st.session_state.get("ui_mode", "simple") == "simple" else 1,
+            horizontal=True,
+        )
+        st.session_state.ui_mode = ui_mode.lower()
+    with col2:
+        theme = st.radio(
+            "Theme",
+            ["Dark", "Light"],
+            index=0 if st.session_state.get("theme", "dark") == "dark" else 1,
+            horizontal=True,
+        )
+        if st.session_state.get("theme") != theme.lower():
+            st.session_state.theme = theme.lower()
+            st.rerun()
+
+    display_beginner_glossary()
+    if st.button("Reset App Settings", type="secondary"):
+        st.session_state.clear()
+        st.rerun()
 
 
 def show_main_dashboard():
@@ -1349,78 +2047,145 @@ def show_main_dashboard():
         start = sidebar_params['start']
         end = sidebar_params['end']
         interval = sidebar_params['interval']
+        data_source = sidebar_params.get('data_source', st.session_state.get("data_source", DEFAULT_DATA_SOURCE))
         show_price = sidebar_params['show_price']
         show_drawdown = sidebar_params['show_drawdown']
         show_corr = sidebar_params['show_corr']
-        is_simulator_mode = sidebar_params['is_simulator_mode']
-        enable_portfolio = sidebar_params['enable_portfolio']
-        portfolio_weight_input = sidebar_params['portfolio_weight_input']
-        rebalance_period = sidebar_params['rebalance_period']
-        enable_risk = sidebar_params['enable_risk']
-        stop_loss_pct = sidebar_params['stop_loss_pct']
-        take_profit_pct = sidebar_params['take_profit_pct']
-        enable_optimizer = sidebar_params['enable_optimizer']
-        optimizer_strategy = sidebar_params['optimizer_strategy']
-        optimizer_strat_hold = sidebar_params['optimizer_strat_hold']
-        optimizer_strat_fee = sidebar_params['optimizer_strat_fee']
 
-        # Determine mode from session state and simulator flag
-        current_mode = st.session_state.get('mode', 'backtesting')
-        if current_mode == 'analysis':
-            mode = "📊 Analysis"
-        elif is_simulator_mode or current_mode == 'simulator':
-            mode = "🎮 Simulator"
-        else:
-            mode = "📈 Backtesting"
+        tickers_label = ", ".join(tickers)
+        st.title("Quant Market Analytics")
+        st.markdown(
+            f"<span class='qma-status'>Ready</span> "
+            f"<span class='qma-muted'>{tickers_label} | {start} to {end} | {interval} | {data_source}</span>",
+            unsafe_allow_html=True,
+        )
+        display_beginner_glossary()
 
         # Download data
-        with st.spinner("📊 Downloading market data..."):
+        with st.spinner("Downloading market data..."):
             try:
-                data = download_data(tickers, start, end, interval)
+                data = load_data_with_status(tickers, start, end, interval, data_source=data_source, emit_status=False)
                 if data is None or len(data) == 0:
-                    st.error("❌ No data available for the selected period and tickers")
+                    st.error("No data available for the selected period and tickers")
                     return
             except Exception as e:
-                st.error(f"❌ Failed to download data: {e}")
+                st.error(f"Failed to download data: {e}")
                 return
 
-        # Select ticker for single-ticker operations
-        if not tickers or len(tickers) == 0:
-            st.error("❌ No tickers selected")
-            return
-        selected_ticker = tickers[0]
+        display_data_status(st.session_state.get("latest_data_status"))
 
-        # Display main content based on mode
-        show_main_content(data, selected_ticker, start, end, interval, mode, enable_portfolio, portfolio_weight_input, rebalance_period, enable_risk, stop_loss_pct, take_profit_pct, enable_optimizer, optimizer_strategy, optimizer_strat_hold, optimizer_strat_fee)
+        loaded_tickers = available_tickers(data)
+        if not loaded_tickers:
+            st.error("No tickers loaded")
+            return
+
+        workflow_options = ["Overview", "Backtest", "Simulator", "Portfolio", "Risk", "Settings"]
+        mode_to_workflow = {
+            "overview": "Overview",
+            "analysis": "Overview",
+            "backtesting": "Backtest",
+            "simulator": "Simulator",
+            "portfolio": "Portfolio",
+            "risk": "Risk",
+            "settings": "Settings",
+        }
+        current_workflow = mode_to_workflow.get(st.session_state.get("mode", "backtesting"), "Backtest")
+        workflow = st.radio(
+            "Workflow",
+            workflow_options,
+            index=workflow_options.index(current_workflow),
+            horizontal=True,
+            key="workflow_selector",
+        )
+        workflow_to_mode = {
+            "Overview": "overview",
+            "Backtest": "backtesting",
+            "Simulator": "simulator",
+            "Portfolio": "portfolio",
+            "Risk": "risk",
+            "Settings": "settings",
+        }
+        st.session_state.mode = workflow_to_mode[workflow]
+        is_simulator_mode = workflow == "Simulator"
+
+        selected_index = 0
+        if tickers and tickers[0] in loaded_tickers:
+            selected_index = loaded_tickers.index(tickers[0])
+        if st.session_state.get("selected_workflow_ticker") not in loaded_tickers:
+            st.session_state.selected_workflow_ticker = loaded_tickers[selected_index]
+        selected_ticker = st.selectbox(
+            "Ticker for single-asset workflows",
+            loaded_tickers,
+            index=selected_index,
+            key="selected_workflow_ticker",
+        )
+
+        if workflow == "Overview":
+            show_overview_workflow(data, loaded_tickers, selected_ticker, interval)
+        elif workflow == "Backtest":
+            show_backtesting_mode(
+                data,
+                selected_ticker,
+                start,
+                end,
+                interval,
+                False,
+                "",
+                "monthly",
+                False,
+                5.0,
+                10.0,
+                False,
+                None,
+                2,
+                0.001,
+            )
+        elif workflow == "Simulator":
+            show_simulator_mode(data, selected_ticker, start, end, interval)
+        elif workflow == "Portfolio":
+            show_portfolio_workflow(data, loaded_tickers, interval)
+        elif workflow == "Risk":
+            show_risk_workflow(data, selected_ticker, interval)
+        elif workflow == "Settings":
+            show_settings_workflow()
 
         # Display additional charts if enabled
-        if show_price and not is_simulator_mode:
-            st.subheader("📈 Price Action & Technical Indicators")
+        if show_price and workflow in {"Overview", "Backtest"}:
+            st.subheader("Price Action & Technical Indicators")
             backtest_signals = None
-            if 'backtest_result' in st.session_state and st.session_state.backtest_result:
+            chart_backtest_result = None
+            if (
+                'backtest_result' in st.session_state
+                and st.session_state.backtest_result
+                and st.session_state.get("backtest_ticker") == selected_ticker
+            ):
+                chart_backtest_result = st.session_state.backtest_result
                 backtest_signals = {
-                    'entries': st.session_state.backtest_result['entries'],
-                    'exits': st.session_state.backtest_result['exits']
+                    'entries': chart_backtest_result['entries'],
+                    'exits': chart_backtest_result['exits']
                 }
-            display_advanced_chart(data, selected_ticker, st.session_state.get('backtest_result'), backtest_signals)
+            display_advanced_chart(data, selected_ticker, chart_backtest_result, backtest_signals)
+        elif show_price and is_simulator_mode:
+            st.subheader("Simulator Chart")
+            display_simulator_chart(data, selected_ticker)
 
-        if show_drawdown and not is_simulator_mode:
-            st.subheader("📉 Drawdown Analysis")
-            close_data = data.xs(selected_ticker, level=1, axis=1)["Close"] if len(data.columns.names) > 1 else data["Close"]
+        if show_drawdown and workflow in {"Overview", "Backtest"}:
+            st.subheader("Drawdown Analysis")
+            close_data = get_ticker_frame(data, selected_ticker)["Close"]
             dd = close_data / close_data.cummax() - 1
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=dd.index, y=dd.values * 100, fill='tozeroy', name='Drawdown'))
             fig.update_layout(
                 title="Portfolio Drawdown",
                 yaxis_title="Drawdown (%)",
-                template='plotly_white' if st.session_state.get('theme', 'dark') == 'light' else 'plotly_dark',
+                template=get_plotly_template(st.session_state.get('theme', 'dark')),
                 height=400
             )
             st.plotly_chart(fig, use_container_width=True)
 
-        if show_corr and not is_simulator_mode:
-            st.subheader("🔗 Correlation Matrix")
-            close_for_corr = data["Close"] if isinstance(data.columns, pd.MultiIndex) and "Close" in data.columns.get_level_values(0) else data["Close"]
+        if show_corr and workflow in {"Overview", "Backtest", "Portfolio"}:
+            st.subheader("Correlation Matrix")
+            close_for_corr = get_close_prices(data)
             returns = compute_returns(close_for_corr)
             corr_matrix = correlation_matrix(returns.to_frame() if isinstance(returns, pd.Series) else returns)
 
@@ -1435,12 +2200,12 @@ def show_main_dashboard():
                 fig.update_layout(
                     title="Asset Correlation Matrix",
                     height=500,
-                    template='plotly_white' if st.session_state.get('theme', 'dark') == 'light' else 'plotly_dark'
+                    template=get_plotly_template(st.session_state.get('theme', 'dark'))
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        st.error(f"❌ Dashboard error: {str(e)}")
+        st.error(f"Dashboard error: {str(e)}")
         with st.expander("Debug Information"):
             st.code(f"Error: {str(e)}")
             st.code(traceback.format_exc())
@@ -1450,7 +2215,7 @@ def show_sidebar():
     """Display sidebar with proper error handling."""
     try:
         # Stock search section
-        st.subheader("🔍 Stock Search")
+        st.subheader("Stock Search")
 
         search_query = st.text_input(
             "Search stocks",
@@ -1459,19 +2224,21 @@ def show_sidebar():
         )
 
         if search_query:
-            with st.spinner("🔍 Searching..."):
+            with st.spinner("Searching..."):
                 search_results = search_stocks(search_query, limit=5)
 
             if search_results:
                 st.write("**Search Results:**")
                 for stock in search_results:
                     if st.button(
-                        f"{stock['symbol']} - {stock['name'][:30]}",
+                        f"Add {stock['symbol']} - {stock['name'][:24]}",
                         key=f"search_{stock['symbol']}",
                         help=f"Sector: {stock['sector']}"
                     ):
-                        # Update ticker input with selected stock
-                        st.session_state.ticker_input = stock['symbol']
+                        st.session_state.ticker_input = merge_ticker_input(
+                            st.session_state.ticker_input,
+                            stock['symbol'],
+                        )
                         st.rerun()
             else:
                 st.info("No stocks found. Try a different search term.")
@@ -1486,17 +2253,39 @@ def show_sidebar():
         )
 
         popular_stocks = get_popular_stocks(category)
-        cols = st.columns(3)
-        for i, symbol in enumerate(popular_stocks[:9]):  # Show first 9
-            with cols[i % 3]:
-                if st.button(symbol, key=f"sidebar_popular_{i}_{symbol}"):
-                    st.session_state.ticker_input = symbol
-                    st.rerun()
+        selected_popular_stocks = st.multiselect(
+            "Category Symbols",
+            popular_stocks,
+            default=popular_stocks[: min(5, len(popular_stocks))],
+            help="Choose symbols from the selected category before adding or replacing the ticker list.",
+            key=f"category_symbols_{category}",
+        )
+        category_action_cols = st.columns(3)
+        with category_action_cols[0]:
+            if st.button("Use Category", key=f"use_category_{category}", use_container_width=True):
+                st.session_state.ticker_input = merge_ticker_input("", selected_popular_stocks or popular_stocks[:12], replace=True)
+                st.rerun()
+        with category_action_cols[1]:
+            if st.button("Add Category", key=f"add_category_{category}", use_container_width=True):
+                st.session_state.ticker_input = merge_ticker_input(st.session_state.ticker_input, selected_popular_stocks or popular_stocks[:12])
+                st.rerun()
+        with category_action_cols[2]:
+            if st.button("Clear", key="clear_tickers", use_container_width=True):
+                st.session_state.ticker_input = ""
+                st.rerun()
+
+        with st.expander("Single-symbol quick add", expanded=False):
+            cols = st.columns(3)
+            for i, symbol in enumerate(popular_stocks[:18]):
+                with cols[i % 3]:
+                    if st.button(symbol, key=f"sidebar_popular_{i}_{symbol}"):
+                        st.session_state.ticker_input = merge_ticker_input(st.session_state.ticker_input, symbol)
+                        st.rerun()
 
         st.sidebar.divider()
 
         # Data section
-        st.subheader("📈 Data Selection")
+        st.subheader("Data Selection")
 
         # Use session state for ticker input to persist selections
         tickers_input = st.text_input(
@@ -1508,12 +2297,42 @@ def show_sidebar():
         # Update session state when user types
         st.session_state.ticker_input = tickers_input
 
+        preset = st.selectbox(
+            "Ticker Preset",
+            get_stock_presets(),
+            index=0,
+            help="Load a curated list into the ticker box"
+        )
+        preset_symbols = get_stock_preset_symbols(preset)
+        preset_col1, preset_col2 = st.columns(2)
+        with preset_col1:
+            if st.button("Use Preset", use_container_width=True):
+                st.session_state.ticker_input = merge_ticker_input("", preset_symbols, replace=True)
+                st.rerun()
+        with preset_col2:
+            if st.button("Add Preset", use_container_width=True):
+                st.session_state.ticker_input = merge_ticker_input(st.session_state.ticker_input, preset_symbols)
+                st.rerun()
+
         interval = st.selectbox(
             "Interval",
             INTERVALS,
             index=4,
             help="Candle frequency for analysis"
         )
+
+        saved_source = st.session_state.get("data_source", DEFAULT_DATA_SOURCE)
+        if saved_source not in DATA_SOURCE_OPTIONS:
+            saved_source = DEFAULT_DATA_SOURCE
+        data_source = st.selectbox(
+            "Data Source",
+            DATA_SOURCE_OPTIONS,
+            index=DATA_SOURCE_OPTIONS.index(saved_source),
+            help="Auto tries Yahoo first for recent/intraday data, then Stooq for daily data, then demo data if real data is unavailable.",
+        )
+        st.session_state.data_source = data_source
+        if data_source == DATA_SOURCE_STOOQ and interval != "1d":
+            st.caption("Stooq is available for daily candles here. Choose 1d for real Stooq data.")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -1523,104 +2342,45 @@ def show_sidebar():
 
         # Validate dates
         if start >= end:
-            st.error("❌ Start date must be before end date")
+            st.error("Start date must be before end date")
             return
 
         tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
         if not tickers:
-            st.error("❌ Please enter at least one ticker symbol")
+            st.error("Please enter at least one ticker symbol")
             return
 
         st.sidebar.divider()
 
         # Display options
-        st.subheader("👁️ Display Options")
+        st.subheader("Display Options")
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            show_price = st.toggle("📊 Chart", value=True)
+            show_price = st.toggle("Chart", value=True)
         with col2:
-            show_drawdown = st.toggle("📉 Drawdown", value=True)
+            show_drawdown = st.toggle("Drawdown", value=True)
         with col3:
-            show_corr = st.toggle("🔗 Correlation", value=True)
+            show_corr = st.toggle("Correlation", value=True)
 
-        st.sidebar.divider()
-
-        # Mode selection
-        st.subheader("🎮 Mode Selection")
-
-        # Get current mode from session state
-        current_mode = st.session_state.get('mode', 'backtesting')
-
-        # Handle analysis mode differently - don't show mode selection
-        if current_mode == 'analysis':
-            st.info("📊 **Analysis Mode**: Use the controls below to explore technical indicators and charts.")
-            mode = "📊 Analysis"
-            is_simulator_mode = False
-        else:
-            # Map session state mode to radio options
-            mode_options = ["📊 Backtesting", "🎮 Simulator"]
-            mode_index = 1 if current_mode == 'simulator' else 0
-
-            mode = st.radio(
-                "Select Mode",
-                mode_options,
-                index=mode_index,
-                help="Backtesting: Test strategies automatically | Simulator: Trade manually",
-                key="mode_radio"
-            )
-
-            # Update session state mode based on selection
-            selected_mode = "simulator" if "Simulator" in mode else "backtesting"
-            if st.session_state.get('mode') != selected_mode:
-                st.session_state.mode = selected_mode
-            is_simulator_mode = "Simulator" in mode
-
-        # Phase 2 Enhancements - only show in backtesting mode
-        if not is_simulator_mode:
-            st.subheader("🧩 Phase 2 Enhancements")
-            enable_portfolio = st.checkbox("Enable Portfolio Backtesting", value=False)
-            if enable_portfolio:
-                portfolio_weight_input = st.text_input(
-                    "Portfolio Weights (symbol:weight,...)",
-                    "AAPL:0.2,MSFT:0.2,NVDA:0.2,TSLA:0.2,SPY:0.2"
-                )
-                rebalance_period = st.selectbox("Rebalance Period", ["monthly", "weekly", "daily"], index=0)
-            else:
-                portfolio_weight_input = ""
-                rebalance_period = "monthly"
-
-            enable_risk = st.checkbox("Enable Risk Management Metrics", value=True)
-            with st.expander("Risk Management Settings", expanded=False):
-                stop_loss_pct = st.slider("Stop Loss (%)", min_value=0.0, max_value=20.0, value=5.0, step=0.5)
-                take_profit_pct = st.slider("Take Profit (%)", min_value=0.0, max_value=50.0, value=10.0, step=0.5)
-
-            enable_optimizer = st.checkbox("Enable Strategy Optimizer", value=False)
-            if enable_optimizer:
-                optimizer_strategy = st.selectbox(
-                    "Optimizer Strategy",
-                    [s for s in STRATEGY_OPTIONS if s != "None"]
-                )
-                optimizer_strat_hold = st.number_input("Optimizer Holding Period", min_value=0, max_value=50, value=2)
-                optimizer_strat_fee = st.slider("Optimizer Fee (%)", min_value=0.0, max_value=1.0, value=0.1, step=0.01) / 100
-            else:
-                optimizer_strategy = None
-        else:
-            # Set default values for simulator mode
-            enable_portfolio = False
-            portfolio_weight_input = ""
-            rebalance_period = "monthly"
-            enable_risk = False
-            stop_loss_pct = 5.0
-            take_profit_pct = 10.0
-            enable_optimizer = False
-            optimizer_strategy = None
+        # Workflow-specific settings now live in the relevant top-level workflow.
+        enable_portfolio = False
+        portfolio_weight_input = ""
+        rebalance_period = "monthly"
+        enable_risk = False
+        stop_loss_pct = 5.0
+        take_profit_pct = 10.0
+        enable_optimizer = False
+        optimizer_strategy = None
+        optimizer_strat_hold = 2
+        optimizer_strat_fee = 0.001
+        is_simulator_mode = st.session_state.get('mode') == 'simulator'
 
         st.sidebar.divider()
 
         # Persistence options
-        st.markdown("### 💾 Workspace")
+        st.markdown("### Workspace")
         if st.button("Save Workspace"):
             try:
                 workspace_data = {
@@ -1628,6 +2388,7 @@ def show_sidebar():
                     'start_date': str(start),
                     'end_date': str(end),
                     'interval': interval,
+                    'data_source': data_source,
                     'mode': st.session_state.mode,
                     'show_price': show_price,
                     'show_drawdown': show_drawdown,
@@ -1645,9 +2406,9 @@ def show_sidebar():
                     'timestamp': str(pd.Timestamp.now())
                 }
                 save_workspace("workspace.json", workspace_data)
-                st.success("✅ Workspace saved!")
+                st.success("Workspace saved!")
             except Exception as e:
-                st.error(f"❌ Failed to save workspace: {e}")
+                st.error(f"Failed to save workspace: {e}")
 
         if st.button("Load Workspace"):
             try:
@@ -1655,13 +2416,14 @@ def show_sidebar():
                 if workspace_data:
                     # Restore settings
                     st.session_state.ticker_input = workspace_data.get('tickers', DEFAULT_TICKERS)
+                    st.session_state.data_source = workspace_data.get('data_source', DEFAULT_DATA_SOURCE)
                     st.session_state.mode = workspace_data.get('mode', 'backtesting')
-                    st.success("✅ Workspace loaded!")
+                    st.success("Workspace loaded!")
                     st.rerun()
                 else:
-                    st.warning("⚠️ No saved workspace found")
+                    st.warning("No saved workspace found")
             except Exception as e:
-                st.error(f"❌ Failed to load workspace: {e}")
+                st.error(f"Failed to load workspace: {e}")
 
         # Return all the sidebar variables
         return {
@@ -1669,6 +2431,7 @@ def show_sidebar():
             'start': start,
             'end': end,
             'interval': interval,
+            'data_source': data_source,
             'show_price': show_price,
             'show_drawdown': show_drawdown,
             'show_corr': show_corr,
@@ -1686,7 +2449,7 @@ def show_sidebar():
         }
 
     except Exception as e:
-        st.error(f"❌ Sidebar error: {e}")
+        st.error(f"Sidebar error: {e}")
         return None
 
 
@@ -1722,19 +2485,19 @@ def show_main_content_v2():
         # MAIN CONTENT
         # ========================================================================
 
-        st.title("📊 Quant Market Analytics")
+        st.title("Quant Market Analytics")
         st.markdown("*Professional quantitative trading analysis and backtesting platform*")
 
         # Download data
-        with st.spinner("📥 Downloading market data..."):
-            data = download_data(tickers, start, end, interval)
+        with st.spinner("Downloading market data..."):
+            data = load_data_with_status(tickers, start, end, interval)
 
         if data is None:
-            st.error("❌ Failed to download market data. Please check your ticker symbols and date range.")
+            st.error("Failed to download market data. Please check your ticker symbols and date range.")
             return
 
         if data.empty:
-            st.error("❌ No data available for the selected tickers and date range.")
+            st.error("No data available for the selected tickers and date range.")
             return
 
         # Process data
@@ -1772,7 +2535,7 @@ def show_main_content_v2():
         # Advanced chart
         if show_price:
             if not is_simulator_mode:
-                st.subheader("📈 Price Action & Technical Indicators")
+                st.subheader("Price Action & Technical Indicators")
 
                 backtest_signals = None
                 if 'backtest_result' in st.session_state and st.session_state.backtest_result:
@@ -1784,18 +2547,18 @@ def show_main_content_v2():
                 display_advanced_chart(data, selected_ticker, st.session_state.get('backtest_result'), backtest_signals)
             else:
                 # Simulator chart
-                st.subheader("📈 Simulator Chart")
+                st.subheader("Simulator Chart")
                 display_simulator_chart(data, selected_ticker)
 
         # Drawdown chart
         if show_drawdown and not is_simulator_mode:
-            st.subheader("📉 Drawdown Analysis")
+            st.subheader("Drawdown Analysis")
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=dd.index, y=dd.values * 100, fill='tozeroy', name='Drawdown'))
             fig.update_layout(
                 title="Portfolio Drawdown",
                 yaxis_title="Drawdown (%)",
-                template='plotly_dark',
+                template=get_plotly_template(st.session_state.get('theme', 'dark')),
                 height=400
             )
 
@@ -1804,7 +2567,7 @@ def show_main_content_v2():
 
         # Correlation heatmap
         if show_corr and not is_simulator_mode:
-            st.subheader("🔗 Correlation Matrix")
+            st.subheader("Correlation Matrix")
             corr_matrix = correlation_matrix(returns.to_frame() if isinstance(returns, pd.Series) else returns)
 
             if corr_matrix is not None and not corr_matrix.empty:
@@ -1818,7 +2581,7 @@ def show_main_content_v2():
                 fig.update_layout(
                     title="Asset Correlation Matrix",
                     height=500,
-                    template='plotly_dark'
+                    template=get_plotly_template(st.session_state.get('theme', 'dark'))
                 )
 
                 st.plotly_chart(fig, use_container_width=True)
@@ -1828,14 +2591,14 @@ def show_main_content_v2():
         st.markdown(
             """
             <div style='text-align: center; color: gray; font-size: 12px;'>
-            📊 Quant Market Analytics v1.1.2 | Data from Yahoo Finance | Not financial advice
+            Quant Market Analytics v1.1.2 | Data from selected source | Not financial advice
             </div>
             """,
             unsafe_allow_html=True
         )
 
     except Exception as e:
-        st.error(f"❌ Main content error: {e}")
+        st.error(f"Main content error: {e}")
         with st.expander("Debug Information"):
             st.code(f"Error: {str(e)}")
             st.code(traceback.format_exc())
@@ -1871,26 +2634,26 @@ def show_main_content_v2():
         st.sidebar.divider()
         
         # Display options
-        st.subheader("👁️ Display Options")
+        st.subheader("Display Options")
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            show_price = st.toggle("📊 Chart", value=True)
+            show_price = st.toggle("Chart", value=True)
         with col2:
-            show_drawdown = st.toggle("📉 Drawdown", value=True)
+            show_drawdown = st.toggle("Drawdown", value=True)
         with col3:
-            show_corr = st.toggle("🔗 Correlation", value=True)
+            show_corr = st.toggle("Correlation", value=True)
         
         st.sidebar.divider()
         
         # Mode selection
-        st.subheader("🎮 Mode Selection")
+        st.subheader("Mode Selection")
         
         # Get current mode from session state
         current_mode = st.session_state.get('mode', 'backtesting')
         
         # Map session state mode to radio options
-        mode_options = ["📊 Backtesting", "🎮 Simulator"]
+        mode_options = ["Backtesting", "Simulator"]
         mode_index = 1 if current_mode == 'simulator' else 0
         
         mode = st.radio(
@@ -1909,7 +2672,7 @@ def show_main_content_v2():
 
         # Phase 2 Enhancements - only show in backtesting mode
         if not is_simulator_mode:
-            st.subheader("🧩 Phase 2 Enhancements")
+            st.subheader("Advanced Options")
             enable_portfolio = st.checkbox("Enable Portfolio Backtesting", value=False)
             if enable_portfolio:
                 portfolio_weight_input = st.text_input(
@@ -1950,7 +2713,7 @@ def show_main_content_v2():
         st.sidebar.divider()
         
         # Persistence options
-        st.markdown("### 💾 Workspace")
+        st.markdown("### Workspace")
         if st.button("Save Workspace"):
             state = {
                 'ticker_input': st.session_state.ticker_input,
@@ -1976,7 +2739,7 @@ def show_main_content_v2():
         config = None
         
         if not is_simulator_mode:
-            st.subheader("🤖 Backtesting")
+            st.subheader("Backtesting")
             
             strategy_name = st.selectbox(
                 "Select Strategy",
@@ -1987,7 +2750,7 @@ def show_main_content_v2():
         if strategy_name != "None":
             # Quick presets
             preset = st.selectbox(
-                "📋 Quick Presets",
+                "Quick Presets",
                 ["Custom"] + list(TRADING_PRESETS.keys()),
                 help="Pre-configured trading styles"
             )
@@ -2042,7 +2805,7 @@ def show_main_content_v2():
             
             # Advanced options (only in expert mode)
             if st.session_state.ui_mode == 'expert':
-                with st.expander("⚙️ Advanced Options", expanded=False):
+                with st.expander("Advanced Options", expanded=False):
                     transaction_fee = st.slider(
                         "Transaction Fee (%)",
                         min_value=0.0,
@@ -2071,7 +2834,7 @@ def show_main_content_v2():
         
         # Simulator section
         else:
-            st.subheader("🎮 Trading Simulator")
+            st.subheader("Trading Simulator")
             
             # Initialize simulator
             create_simulator_session()
@@ -2079,7 +2842,7 @@ def show_main_content_v2():
             
             # Simulator controls
             simulator_active = st.toggle(
-                "🎮 Activate Simulator", 
+                "Activate Simulator",
                 value=st.session_state.simulator.get('active', False),
                 help="Enable manual trading simulation"
             )
@@ -2088,20 +2851,20 @@ def show_main_content_v2():
                 st.session_state.simulator['active'] = True
                 
                 # Simulator settings in a more organized layout
-                st.markdown("### ⚙️ Simulation Settings")
+                st.markdown("### Simulation Settings")
 
                 # Date range selection
                 col1, col2 = st.columns(2)
                 with col1:
                     sim_start = st.date_input(
-                        "📅 Start Date",
+                        "Start Date",
                         value=DEFAULT_START,
                         key="sim_start",
                         help="When your trading simulation begins"
                     )
                 with col2:
                     sim_end = st.date_input(
-                        "📅 End Date",
+                        "End Date",
                         value=DEFAULT_END,
                         key="sim_end",
                         help="When your trading simulation ends"
@@ -2111,7 +2874,7 @@ def show_main_content_v2():
                 col1, col2 = st.columns(2)
                 with col1:
                     initial_equity = st.number_input(
-                        "💰 Starting Capital ($)",
+                        "Starting Capital ($)",
                         value=10000,
                         min_value=1000,
                         max_value=1000000,
@@ -2120,7 +2883,7 @@ def show_main_content_v2():
                     )
                 with col2:
                     sim_fee = st.slider(
-                        "💸 Transaction Fee (%)",
+                        "Transaction Fee (%)",
                         min_value=0.0,
                         max_value=1.0,
                         value=0.1,
@@ -2133,22 +2896,22 @@ def show_main_content_v2():
                     try:
                         # Get data for the selected ticker
                         selected_ticker = tickers[0] if tickers else "AAPL"
-                        sim_data = download_data([selected_ticker], sim_start, sim_end, interval)
+                        sim_data = load_data_with_status([selected_ticker], sim_start, sim_end, interval)
 
                         if len(sim_data) > 0:
                             simulator.reset()
                             simulator.transaction_fee = sim_fee
                             simulator.initial_equity = initial_equity
                             simulator.set_timeframe(sim_data, sim_start, sim_end)
-                            st.success(f"🎯 **Simulation Ready!** Trading **{selected_ticker}** from {sim_start.strftime('%B %d, %Y')} to {sim_end.strftime('%B %d, %Y')} with ${initial_equity:,.0f} starting capital")
-                            st.info("💡 Use the Trading Panel below to buy and sell shares. Navigate through time to practice your trading strategy!")
+                            st.success(f"**Simulation Ready!** Trading **{selected_ticker}** from {sim_start.strftime('%B %d, %Y')} to {sim_end.strftime('%B %d, %Y')} with ${initial_equity:,.0f} starting capital")
+                            st.info("Use the Trading Panel below to buy and sell shares. Navigate through time to practice your trading strategy!")
                         else:
-                            st.error("❌ No market data available for the selected period. Try different dates or ticker.")
+                            st.error("No market data available for the selected period. Try different dates or ticker.")
                             simulator_active = False
 
                     except Exception as e:
-                        st.error(f"❌ Failed to initialize simulator: {e}")
-                        st.info("💡 Make sure you have selected a valid ticker symbol in the sidebar.")
+                        st.error(f"Failed to initialize simulator: {e}")
+                        st.info("Make sure you have selected a valid ticker symbol in the sidebar.")
                         simulator_active = False
                 
                 # Trading controls
@@ -2156,34 +2919,34 @@ def show_main_content_v2():
                     st.markdown("---")
 
                     # Current state display - prominent metrics
-                    st.markdown("### 📊 Current Position")
+                    st.markdown("### Current Position")
                     state = simulator.get_current_state()
 
                     # Main metrics in a nice grid
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("📅 Current Date", state['date'].strftime('%Y-%m-%d'))
+                        st.metric("Current Date", state['date'].strftime('%Y-%m-%d'))
                     with col2:
-                        st.metric("💰 Available Cash", f"${state['cash']:.2f}")
+                        st.metric("Available Cash", f"${state['cash']:.2f}")
                     with col3:
-                        st.metric("📊 Shares Held", state['positions'])
+                        st.metric("Shares Held", state['positions'])
                     with col4:
-                        st.metric("💎 Total Equity", f"${state['total_equity']:.2f}")
+                        st.metric("Total Equity", f"${state['total_equity']:.2f}")
 
                     # Current price display
                     if hasattr(simulator, 'current_price'):
-                        st.metric("📈 Current Price", f"${simulator.current_price:.2f}")
+                        st.metric("Current Price", f"${simulator.current_price:.2f}")
 
                     st.markdown("---")
 
                     # Trading Panel
-                    st.markdown("### 🏪 Trading Panel")
+                    st.markdown("### Trading Panel")
 
                     # Buy/Sell section with better layout
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        st.markdown("#### 🟢 BUY")
+                        st.markdown("#### Buy")
                         buy_qty = st.number_input(
                             "Quantity to Buy",
                             min_value=1,
@@ -2195,16 +2958,16 @@ def show_main_content_v2():
                         buy_cost = buy_qty * simulator.current_price if hasattr(simulator, 'current_price') else 0
                         st.info(f"Cost: ${buy_cost:.2f}")
 
-                        if st.button("🟢 EXECUTE BUY", type="primary", use_container_width=True):
+                        if st.button("Execute Buy", type="primary", use_container_width=True):
                             if simulator.execute_buy(buy_qty):
-                                st.success(f"✅ Bought {buy_qty} shares at ${simulator.current_price:.2f}")
+                                st.success(f"Bought {buy_qty} shares at ${simulator.current_price:.2f}")
                                 st.rerun()
                             else:
                                 can_buy, reason = simulator.can_buy(buy_qty)
-                                st.error(f"❌ {reason}")
+                                st.error(reason)
 
                     with col2:
-                        st.markdown("#### 🔴 SELL")
+                        st.markdown("#### Sell")
                         sell_qty = st.number_input(
                             "Quantity to Sell",
                             min_value=1,
@@ -2216,54 +2979,54 @@ def show_main_content_v2():
                         sell_value = sell_qty * simulator.current_price if hasattr(simulator, 'current_price') else 0
                         st.info(f"Value: ${sell_value:.2f}")
 
-                        if st.button("🔴 EXECUTE SELL", type="primary", use_container_width=True):
+                        if st.button("Execute Sell", type="primary", use_container_width=True):
                             if simulator.execute_sell(sell_qty):
-                                st.success(f"✅ Sold {sell_qty} shares at ${simulator.current_price:.2f}")
+                                st.success(f"Sold {sell_qty} shares at ${simulator.current_price:.2f}")
                                 st.rerun()
                             else:
                                 can_sell, reason = simulator.can_sell(sell_qty)
-                                st.error(f"❌ {reason}")
+                                st.error(reason)
 
                     st.markdown("---")
 
                     # Time Navigation Panel
-                    st.markdown("### ⏰ Time Navigation")
+                    st.markdown("### Time Navigation")
 
                     time_col1, time_col2, time_col3, time_col4, time_col5 = st.columns(5)
 
                     with time_col1:
-                        if st.button("⏮️ START", help="Go to beginning", use_container_width=True):
+                        if st.button("Start", help="Go to beginning", use_container_width=True):
                             simulator.go_to_date(simulator.sim_data.index[0])
                             st.rerun()
 
                     with time_col2:
-                        if st.button("◀️ -1 DAY", help="Go back 1 day", use_container_width=True):
+                        if st.button("Previous Day", help="Go back 1 day", use_container_width=True):
                             if simulator.advance_time(-1):
                                 st.rerun()
                             else:
                                 st.info("Already at start")
 
                     with time_col3:
-                        if st.button("▶️ +1 DAY", help="Advance 1 day", use_container_width=True):
+                        if st.button("Next Day", help="Advance 1 day", use_container_width=True):
                             if simulator.advance_time(1):
                                 st.rerun()
                             else:
                                 st.info("End of simulation reached")
 
                     with time_col4:
-                        if st.button("⏭️ +5 DAYS", help="Advance 5 days", use_container_width=True):
+                        if st.button("Advance 5 Days", help="Advance 5 days", use_container_width=True):
                             if simulator.advance_time(5):
                                 st.rerun()
                             else:
                                 st.info("End of simulation reached")
 
                     with time_col5:
-                        if st.button("🔄 RESET", type="secondary", help="Reset simulation", use_container_width=True):
+                        if st.button("Reset", type="secondary", help="Reset simulation", use_container_width=True):
                             reset_simulator()
                             st.rerun()
             else:
                 st.session_state.simulator['active'] = False
-                st.info("🎮 **Ready to start trading?** Toggle 'Activate Simulator' above to begin your trading simulation!")
+                st.info("**Ready to start trading?** Toggle 'Activate Simulator' above to begin your trading simulation!")
                 st.markdown("""
                 **What you can do:**
                 - Practice buying and selling stocks
@@ -2276,20 +3039,20 @@ def show_main_content_v2():
     # MAIN CONTENT
     # ========================================================================
     
-    st.title("📊 Quant Market Analytics")
+    st.title("Quant Market Analytics")
     st.markdown("*Professional quantitative trading analysis and backtesting platform*")
     
     # Download data
     try:
-        with st.spinner("📥 Downloading market data..."):
-            data = download_data(tickers, start, end, interval)
+        with st.spinner("Downloading market data..."):
+            data = load_data_with_status(tickers, start, end, interval)
     except Exception as e:
-        st.error(f"❌ Failed to download data: {e}")
-        st.info("💡 Check that ticker symbols are valid (e.g., AAPL not Apple)")
+        st.error(f"Failed to download data: {e}")
+        st.info("Check that ticker symbols are valid (e.g., AAPL not Apple)")
         st.stop()
     
     if data is None or data.empty:
-        st.error("❌ No data available for the selected period and tickers")
+        st.error("No data available for the selected period and tickers")
         st.stop()
     
     close = data["Close"]
@@ -2312,12 +3075,12 @@ def show_main_content_v2():
         # BACKTESTING MODE
         if strategy_name and strategy_name != "None" and config is not None:
             try:
-                with st.spinner("⚙️ Running backtest..."):
+                with st.spinner("Running backtest..."):
                     # Extract data
                     ticker_data = extract_ticker_data(data, selected_ticker, backtest_start, backtest_end)
                     
                     if len(ticker_data) == 0:
-                        st.warning(f"⚠️ No data for {selected_ticker} in range {backtest_start} to {backtest_end}")
+                        st.warning(f"No data for {selected_ticker} in range {backtest_start} to {backtest_end}")
                     else:
                         # Prepare indicators
                         indicators = compute_all_indicators(ticker_data["Close"])
@@ -2340,9 +3103,9 @@ def show_main_content_v2():
                                           ['total_return', 'sharpe_ratio', 'max_drawdown', 'win_rate']}
             
             except ValueError as e:
-                st.error(f"❌ Configuration error: {e}")
+                st.error(f"Configuration error: {e}")
             except Exception as e:
-                st.error(f"❌ Backtest failed: {e}")
+                st.error(f"Backtest failed: {e}")
                 with st.expander("Debug Info"):
                     st.write(f"Error: {str(e)}")
     
@@ -2358,7 +3121,7 @@ def show_main_content_v2():
 
     # Phase 2: Portfolio and risk analytics
     if enable_risk and not is_simulator_mode:
-        st.subheader("📌 Risk Management Summary")
+        st.subheader("Risk Management Summary")
         # Extract selected ticker's returns for risk metrics
         if isinstance(returns, pd.DataFrame):
             ticker_returns = returns[selected_ticker]
@@ -2375,7 +3138,7 @@ def show_main_content_v2():
             st.metric("Total Volatility", f"{ticker_returns.std():.2%}")
 
     if enable_portfolio and not is_simulator_mode:
-        st.subheader("📂 Portfolio Backtest")
+        st.subheader("Portfolio Backtest")
         try:
             weights = {}
             for item in portfolio_weight_input.split(','):
@@ -2424,7 +3187,7 @@ def show_main_content_v2():
                 display_metrics_panel(backtest_metrics)
             
             with col2:
-                st.metric("📅 Period", f"{(backtest_end - backtest_start).days}d")
+                st.metric("Period", f"{(backtest_end - backtest_start).days}d")
             
             st.divider()
             
@@ -2436,36 +3199,35 @@ def show_main_content_v2():
         # Simulator results
         if simulator_metrics is not None:
             st.divider()
-            st.subheader("📊 Simulator Performance")
+            st.subheader("Simulator Performance")
             
             # Current state
             state = simulator.get_current_state()
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("💰 Cash", f"${state['cash']:.2f}")
+                st.metric("Cash", f"${state['cash']:.2f}")
             with col2:
-                st.metric("📊 Positions", state['positions'])
+                st.metric("Positions", state['positions'])
             with col3:
-                st.metric("💎 Total Equity", f"${state['total_equity']:.2f}")
+                st.metric("Total Equity", f"${state['total_equity']:.2f}")
             with col4:
-                st.metric("📈 Unrealized P&L", f"${state['unrealized_pnl']:.2f}")
+                st.metric("Unrealized P&L", f"${state['unrealized_pnl']:.2f}")
             
             # Performance metrics
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                color = "🟢" if simulator_metrics['total_return'] > 0 else "🔴"
-                st.metric("💰 Total Return", f"{color} {simulator_metrics['total_return']:.2f}%")
+                st.metric("Total Return", f"{simulator_metrics['total_return']:.2f}%")
             with col2:
-                st.metric("📊 Sharpe Ratio", f"{simulator_metrics['sharpe_ratio']:.2f}")
+                st.metric("Sharpe Ratio", f"{simulator_metrics['sharpe_ratio']:.2f}")
             with col3:
-                st.metric("📉 Max Drawdown", f"{simulator_metrics['max_drawdown']:.2f}%")
+                st.metric("Max Drawdown", f"{simulator_metrics['max_drawdown']:.2f}%")
             with col4:
-                st.metric("🎯 Win Rate", f"{simulator_metrics['win_rate']:.1f}%")
+                st.metric("Win Rate", f"{simulator_metrics['win_rate']:.1f}%")
             
             # Trade log
             if not simulator_trades_df.empty:
                 st.divider()
-                st.subheader("📋 Trade History")
+                st.subheader("Trade History")
                 
                 # Trade statistics
                 total_trades = len(simulator_trades_df)
@@ -2492,7 +3254,7 @@ def show_main_content_v2():
                 # CSV export
                 csv = simulator_trades_df.to_csv(index=True)
                 st.download_button(
-                    "📥 Export Trades (CSV)",
+                    "Export Trades (CSV)",
                     csv,
                     "simulator_trades.csv",
                     "text/csv"
@@ -2502,7 +3264,7 @@ def show_main_content_v2():
 
             # Phase 2: Strategy optimizer results
             if enable_optimizer and optimizer_strategy and strategy_name != 'None':
-                st.subheader('🧪 Strategy Optimizer Results')
+                st.subheader('Strategy Optimizer Results')
                 try:
                     param_grid = [
                         {'holding_period': h, 'position_type': 'fixed', 'fee_pct': optimizer_strat_fee}
@@ -2531,7 +3293,7 @@ def show_main_content_v2():
     # Advanced chart
     if show_price:
         if not is_simulator_mode:
-            st.subheader("📈 Price Action & Technical Indicators")
+            st.subheader("Price Action & Technical Indicators")
             
             backtest_signals = None
             if backtest_result is not None:
@@ -2543,7 +3305,7 @@ def show_main_content_v2():
             display_advanced_chart(data, selected_ticker, backtest_result, backtest_signals)
         else:
             # Simulator chart
-            st.subheader("📈 Simulator Chart")
+            st.subheader("Simulator Chart")
             
             if hasattr(simulator, 'sim_data') and simulator.sim_data is not None:
                 # Create simulator-specific chart
@@ -2641,7 +3403,7 @@ def show_main_content_v2():
                 )
                 
                 current_theme = st.session_state.get('theme', 'dark')
-                template = 'plotly_white' if current_theme == 'light' else 'plotly_dark'
+                template = get_plotly_template(current_theme)
                 
                 fig.update_layout(height=600, showlegend=True, template=template)
                 fig.update_xaxes(title_text="Date", row=2, col=1)
@@ -2650,14 +3412,14 @@ def show_main_content_v2():
                 
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("💡 Activate the simulator to see the trading chart")
+                st.info("Activate the simulator to see the trading chart")
         
         st.divider()
         st.divider()
     
     # Drawdown chart
     if show_drawdown and not is_simulator_mode:
-        st.subheader("📉 Drawdown Analysis")
+        st.subheader("Drawdown Analysis")
         
         drawdown_fig = go.Figure()
         for ticker in tickers:
@@ -2669,7 +3431,7 @@ def show_main_content_v2():
             xaxis_title="Date",
             yaxis_title="Drawdown (%)",
             hovermode='x unified',
-            template='plotly_white' if st.session_state.get('theme', 'dark') == 'light' else 'plotly_dark',
+            template=get_plotly_template(st.session_state.get('theme', 'dark')),
             height=400
         )
         
@@ -2678,7 +3440,7 @@ def show_main_content_v2():
     
     # Correlation heatmap
     if show_corr and not is_simulator_mode:
-        st.subheader("🔗 Correlation Matrix")
+        st.subheader("Correlation Matrix")
         
         corr = correlation_matrix(returns)
         
@@ -2696,7 +3458,7 @@ def show_main_content_v2():
         
         corr_fig.update_layout(
             height=500,
-            template='plotly_white' if st.session_state.get('theme', 'dark') == 'light' else 'plotly_dark'
+            template=get_plotly_template(st.session_state.get('theme', 'dark'))
         )
         
         st.plotly_chart(corr_fig, use_container_width=True)
@@ -2706,7 +3468,7 @@ def show_main_content_v2():
     st.markdown(
         f"""
         <div style='text-align: center; color: gray; font-size: 12px;'>
-        📊 Quant Market Analytics v{__version__} | Data from Yahoo Finance | Not financial advice
+        Quant Market Analytics v{__version__} | Data from selected source | Not financial advice
         </div>
         """,
         unsafe_allow_html=True
@@ -2722,39 +3484,42 @@ def show_welcome_dashboard():
     
     # Hero section
     st.markdown("""
-    <div style='text-align: center; padding: 2rem 0;'>
-        <h1 style='color: #1f77b4; font-size: 3rem; margin-bottom: 0.5rem;'>📊 Quant Market Analytics</h1>
-        <p style='font-size: 1.2rem; color: #666; margin-bottom: 2rem;'>Professional quantitative trading analysis and backtesting platform</p>
+    <div class='qma-panel' style='margin-bottom: 1rem;'>
+        <span class='qma-status'>Ready</span>
+        <h1 style='font-size: 2.1rem; margin: 0.75rem 0 0.25rem;'>Quant Market Analytics</h1>
+        <p class='qma-muted' style='font-size: 1rem; margin: 0;'>
+            Backtest strategies, compare portfolios, and learn market risk with historical data.
+        </p>
     </div>
     """, unsafe_allow_html=True)
     
     # Quick start options
-    st.markdown("### 🚀 Quick Start")
+    st.markdown("### Quick Start")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("""
-        **📈 Backtesting Mode**
+        **Backtesting Mode**
         - Test trading strategies automatically
         - Analyze historical performance
         - Compare against buy-and-hold
         """)
         
-        if st.button("🎯 Start Backtesting", type="primary", use_container_width=True):
+        if st.button("Start Backtesting", type="primary", use_container_width=True):
             st.session_state.show_welcome = False
             st.session_state.mode = "backtesting"
             st.rerun()
     
     with col2:
         st.markdown("""
-        **🎮 Trading Simulator**
+        **Trading Simulator**
         - Practice manual trading
         - Real-time P&L tracking
         - Risk-free learning environment
         """)
         
-        if st.button("🎲 Start Simulator", type="primary", use_container_width=True):
+        if st.button("Start Simulator", type="primary", use_container_width=True):
             from modules.simulator import create_simulator_session
             create_simulator_session()
             st.session_state.show_welcome = False
@@ -2766,13 +3531,13 @@ def show_welcome_dashboard():
     
     with col3:
         st.markdown("""
-        **🔍 Stock Discovery**
+        **Stock Discovery**
         - Search and analyze stocks
         - Technical indicators
         - Market correlation analysis
         """)
         
-        if st.button("🔎 Explore Stocks", type="primary", use_container_width=True):
+        if st.button("Explore Stocks", type="primary", use_container_width=True):
             st.session_state.show_welcome = False
             st.session_state.mode = "analysis"
             st.rerun()
@@ -2780,23 +3545,23 @@ def show_welcome_dashboard():
     st.divider()
     
     # Features overview
-    st.markdown("### ✨ Key Features")
+    st.markdown("### Key Features")
     
     features_col1, features_col2 = st.columns(2)
     
     with features_col1:
         st.markdown("""
-        **🤖 Advanced Strategies**
+        **Advanced Strategies**
         - Moving Average Crossover
         - RSI Mean-Reversion & Threshold
         - Bollinger Bands Breakout
         
-        **📊 Technical Analysis**
+        **Technical Analysis**
         - Multiple timeframes (1m to 1d)
         - 50+ technical indicators
         - Interactive charts with Plotly
         
-        **⚙️ Professional Tools**
+        **Professional Tools**
         - Sharpe ratio, max drawdown
         - Win rate analysis
         - Trade logging & export
@@ -2804,17 +3569,17 @@ def show_welcome_dashboard():
     
     with features_col2:
         st.markdown("""
-        **🎮 Trading Simulator**
+        **Trading Simulator**
         - Manual buy/sell orders
         - Real-time portfolio tracking
         - Performance metrics
         
-        **📈 Risk Management**
+        **Risk Management**
         - Position sizing options
         - Transaction cost modeling
         - Drawdown analysis
         
-        **🔗 Market Analysis**
+        **Market Analysis**
         - Multi-asset correlation
         - Sector analysis
         - Popular stocks discovery
@@ -2823,7 +3588,8 @@ def show_welcome_dashboard():
     st.divider()
     
     # Settings
-    st.markdown("### ⚙️ Preferences")
+    st.markdown("### Preferences")
+    display_beginner_glossary()
     
     settings_col1, settings_col2, settings_col3 = st.columns(3)
     
@@ -2848,7 +3614,7 @@ def show_welcome_dashboard():
             st.rerun()  # Refresh to apply theme changes
     
     with settings_col3:
-        if st.button("🔄 Reset All Settings", type="secondary"):
+        if st.button("Reset All Settings", type="secondary"):
             # Reset to defaults
             st.session_state.clear()
             st.rerun()
@@ -2857,7 +3623,7 @@ def show_welcome_dashboard():
     st.divider()
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        if st.button("⏭️ Skip Welcome - Go to Dashboard", type="secondary", use_container_width=True):
+        if st.button("Go to Dashboard", type="secondary", use_container_width=True):
             st.session_state.show_welcome = False
             st.rerun()
 
@@ -2868,7 +3634,7 @@ def show_welcome_dashboard():
 
 def show_stock_analysis_mode():
     """Display stock discovery and analysis mode."""
-    st.title("🔍 Stock Discovery & Analysis")
+    st.title("Stock Discovery & Analysis")
     st.markdown("*Search, explore, and analyze individual stocks*")
     
     st.divider()
@@ -2884,7 +3650,7 @@ def show_stock_analysis_mode():
         )
     
     with col2:
-        if st.button("🔎 Search", use_container_width=True):
+        if st.button("Search", use_container_width=True):
             if search_query:
                 with st.spinner("Searching..."):
                     results = search_stocks(search_query, limit=10)
@@ -2909,7 +3675,7 @@ def show_stock_analysis_mode():
     st.divider()
     
     # Popular stocks
-    st.subheader("📊 Popular Stocks")
+    st.subheader("Popular Stocks")
     
     category = st.selectbox(
         "Select Category",
@@ -2935,11 +3701,11 @@ def show_stock_analysis_mode():
             ticker = st.session_state.ticker_input.split(',')[0].strip().upper()
             with st.spinner(f"Loading {ticker} data..."):
                 info = get_stock_info(ticker)
-                raw_data = download_data(ticker, '2023-01-01', pd.to_datetime('today'), '1d')
+                raw_data = load_data_with_status(ticker, '2023-01-01', pd.to_datetime('today'), '1d')
                 data = extract_ticker_data(raw_data, ticker, '2023-01-01', pd.to_datetime('today'))
             
             if info and len(data) > 0:
-                st.subheader(f"📈 {ticker} - {info.get('name', 'Stock')}")
+                st.subheader(f"{ticker} - {info.get('name', 'Stock')}")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
@@ -2950,8 +3716,7 @@ def show_stock_analysis_mode():
                     st.metric("Current Price", format_price(info.get('current_price', 0)))
                 with col4:
                     change = info.get('price_change_percent', 0)
-                    color = "🟢" if change > 0 else "🔴"
-                    st.metric("Change", f"{color} {change:.2f}%")
+                    st.metric("Change", f"{change:.2f}%")
                 
                 # Price chart
                 close_prices = data['Close']
@@ -2968,7 +3733,7 @@ def show_stock_analysis_mode():
                 
                 # Link to backtesting
                 st.divider()
-                if st.button("📊 Analyze with Backtest", type="primary", use_container_width=True):
+                if st.button("Analyze with Backtest", type="primary", use_container_width=True):
                     st.session_state.mode = 'backtesting'
                     st.rerun()
         except Exception as e:
@@ -2976,7 +3741,7 @@ def show_stock_analysis_mode():
     
     # Back to welcome
     st.divider()
-    if st.button("🏠 Back to Welcome", type="secondary", use_container_width=True):
+    if st.button("Back to Welcome", type="secondary", use_container_width=True):
         st.session_state.show_welcome = True
         st.rerun()
 

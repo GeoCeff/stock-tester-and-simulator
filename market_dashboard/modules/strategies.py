@@ -130,14 +130,19 @@ class Strategy(ABC):
 
                 if exit_due_to_signal or exit_due_to_time:
                     exit_price = float(df["close"].iloc[i])
+                    exit_reason = "Holding period reached" if exit_due_to_time else "Strategy exit signal"
                     trades.append({
                         'entry_idx': entry_idx,
                         'entry_date': df.index[entry_idx],
                         'entry_price': entry_price,
+                        'entry_reason': 'Strategy entry signal',
                         'exit_idx': i,
                         'exit_date': df.index[i],
                         'exit_price': exit_price,
-                        'return_pct': (exit_price / entry_price - 1) * 100 if entry_price else 0.0
+                        'exit_reason': exit_reason,
+                        'holding_periods': held_periods,
+                        'return_pct': (exit_price / entry_price - 1) * 100 if entry_price else 0.0,
+                        'fees_pct': self.fee_pct * 2 * 100
                     })
                     exits.iloc[i] = 1.0
                     in_position = False

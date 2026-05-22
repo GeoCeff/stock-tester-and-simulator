@@ -12,14 +12,37 @@ import time
 
 # Popular stocks by category
 POPULAR_STOCKS = {
-    "Tech Giants": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
-    "Financial": ["JPM", "BAC", "WFC", "GS", "MS", "V", "MA"],
-    "Healthcare": ["JNJ", "PFE", "UNH", "MRK", "ABT", "TMO", "DHR"],
-    "Consumer": ["WMT", "HD", "MCD", "KO", "PEP", "PG", "COST"],
-    "Energy": ["XOM", "CVX", "COP", "EOG", "SLB", "PXD"],
-    "Industrial": ["BA", "CAT", "GE", "HON", "MMM", "UPS"],
-    "Communication": ["VZ", "T", "CMCSA", "NFLX", "DIS"],
-    "Materials": ["LIN", "APD", "ECL", "SHW", "FCX"]
+    "Tech Giants": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "ORCL", "CRM", "ADBE", "IBM", "INTC"],
+    "AI & Semiconductors": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "ARM", "MU", "QCOM", "AMAT", "LRCX", "KLAC", "MRVL"],
+    "Cloud & Software": ["MSFT", "AMZN", "GOOGL", "CRM", "NOW", "ADBE", "SNOW", "DDOG", "NET", "MDB", "TEAM", "ZS"],
+    "Cybersecurity": ["CRWD", "PANW", "FTNT", "ZS", "S", "OKTA", "CHKP", "CYBR", "TENB", "RPD"],
+    "Index ETFs": ["SPY", "QQQ", "DIA", "IWM", "VTI", "VOO", "VEA", "VWO", "ACWI", "VT"],
+    "Sector ETFs": ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLC", "XLB", "XLU", "XLRE"],
+    "Financial": ["JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "SCHW", "AXP", "V", "MA", "PYPL"],
+    "Healthcare": ["LLY", "UNH", "JNJ", "ABBV", "PFE", "MRK", "ABT", "TMO", "DHR", "ISRG", "SYK", "MDT"],
+    "Biotech": ["AMGN", "GILD", "VRTX", "REGN", "BIIB", "MRNA", "BNTX", "ILMN", "ALNY", "NBIX"],
+    "Consumer Staples": ["WMT", "COST", "PG", "KO", "PEP", "PM", "MO", "MDLZ", "CL", "KMB", "KHC", "GIS"],
+    "Consumer Discretionary": ["AMZN", "TSLA", "HD", "MCD", "NKE", "SBUX", "LOW", "TJX", "BKNG", "ABNB", "CMG", "ORLY"],
+    "Energy": ["XOM", "CVX", "COP", "EOG", "SLB", "MPC", "PSX", "VLO", "OXY", "HAL", "BKR", "LNG"],
+    "Industrial": ["GE", "CAT", "BA", "HON", "UNP", "UPS", "RTX", "LMT", "DE", "ETN", "PH", "MMM"],
+    "Communication": ["GOOGL", "META", "NFLX", "DIS", "CMCSA", "VZ", "T", "TMUS", "CHTR", "EA", "TTWO", "SPOT"],
+    "Materials": ["LIN", "APD", "ECL", "SHW", "FCX", "NEM", "DD", "DOW", "NUE", "MLM", "VMC", "ALB"],
+    "Real Estate": ["PLD", "AMT", "EQIX", "WELL", "SPG", "O", "DLR", "PSA", "CCI", "VICI"],
+    "Utilities": ["NEE", "SO", "DUK", "CEG", "AEP", "SRE", "D", "EXC", "XEL", "PEG"],
+    "International ADRs": ["TSM", "ASML", "NVO", "SAP", "TM", "SONY", "BABA", "PDD", "SHOP", "MELI", "SE", "JD"],
+    "Dividend Leaders": ["JNJ", "PG", "KO", "PEP", "MCD", "WMT", "COST", "HD", "ABBV", "XOM", "CVX", "O"],
+    "High Beta": ["TSLA", "NVDA", "AMD", "COIN", "RIVN", "PLTR", "SOFI", "SHOP", "SNOW", "NET", "U", "ROKU"],
+}
+
+STOCK_PRESETS = {
+    "Default Mix": ["AAPL", "MSFT", "NVDA", "TSLA", "SPY"],
+    "Magnificent 7": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
+    "Broad Market ETFs": ["SPY", "QQQ", "DIA", "IWM", "VTI", "VEA", "VWO"],
+    "Sector Rotation": ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLU", "XLRE"],
+    "AI Stack": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "MSFT", "AMZN", "GOOGL"],
+    "Defensive Basket": ["JNJ", "PG", "KO", "PEP", "WMT", "COST", "NEE", "SO"],
+    "Dividend Basket": ["JNJ", "PG", "KO", "PEP", "MCD", "ABBV", "XOM", "CVX", "O"],
+    "Growth Basket": ["NVDA", "MSFT", "AMZN", "GOOGL", "META", "CRM", "NOW", "CRWD"],
 }
 
 # Cache for stock info to avoid repeated API calls
@@ -184,9 +207,19 @@ def get_popular_stocks(category: str = None) -> List[str]:
         all_stocks = []
         for stocks in POPULAR_STOCKS.values():
             all_stocks.extend(stocks)
-        return list(set(all_stocks))  # Remove duplicates
+        return list(dict.fromkeys(all_stocks))  # Remove duplicates while preserving order
     else:
         return POPULAR_STOCKS["Tech Giants"]  # Default
+
+
+def get_stock_presets() -> List[str]:
+    """Get curated ticker-list presets."""
+    return list(STOCK_PRESETS.keys())
+
+
+def get_stock_preset_symbols(preset: str) -> List[str]:
+    """Get symbols for a curated ticker-list preset."""
+    return STOCK_PRESETS.get(preset, STOCK_PRESETS["Default Mix"])
 
 def format_market_cap(market_cap: Optional[float]) -> str:
     """Format market cap in billions/trillions"""
