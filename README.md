@@ -28,16 +28,20 @@ The app will open in your browser at `http://localhost:8501`.
 - `tests/` - focused pytest coverage for data, simulator, search, and strategies
 - `requirements.txt` - the Python dependencies
 - `README.md` - this guide
+- `QUANT_LAB_AND_BROKER_UI_PLAN.md` - implementation plan for the optional Quant Lab and broker-style UI refresh
 - `LICENSE` - the project license
 - `test_integration.py` - a basic integration test that checks the main modules together
 
 ## Features
 
 - Choose market data from `Auto`, `Yahoo Finance`, `Stooq` daily data, or deterministic demo data
+- Learn the app through an in-app Tutorial workflow and optional guided walkthrough covering stocks, indicators, backtesting, simulation, and risk metrics
+- Load optional learning scenarios for starter overview, trend backtests, RSI practice, simulator drills, ETF portfolios, and risk review
 - See data status, latest bar date, loaded tickers, and unavailable tickers near the active workflow
 - Use curated stock categories and ticker presets for faster setup
 - Calculate common indicators like moving averages, RSI, MACD, and Bollinger Bands
 - Run simple backtests for MA crossover, RSI, and Bollinger Band strategies
+- Use Expert-mode Quant Lab templates or safe custom `strategy(data)` code for signal-based simulations
 - Compare strategy results against buy-and-hold and optional benchmarks
 - Practice manual trading in the simulator with compact status, order previews, and safer buy/sell defaults
 - See performance metrics such as total return, Sharpe ratio, drawdown, win rate, rolling risk, and monthly returns
@@ -59,3 +63,5 @@ python -m pytest
 The main app lives in `market_dashboard/dashboard.py`, and reusable logic is split into modules under `market_dashboard/modules/`.
 
 Old documentation and legacy test scripts have been moved to the `archive/` folder to keep the repository root clean.
+
+For the next major product direction, see `QUANT_LAB_AND_BROKER_UI_PLAN.md`.

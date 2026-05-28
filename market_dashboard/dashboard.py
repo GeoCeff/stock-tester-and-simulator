@@ -39,11 +39,20 @@ from modules.simulator import (
     TradingSimulator, create_simulator_session, get_simulator_engine, 
     reset_simulator
 )
+from modules.quant_lab import QuantLabError, build_strategy_data, run_quant_lab_strategy
+from modules.result_explainer import explain_strategy_result
+from modules.strategy_sandbox import StrategyExecutionError, StrategyValidationError, validate_strategy_code
+from modules.strategy_templates import DEFAULT_TEMPLATE_NAME, get_template, get_template_code, template_names
 
 try:
-    from ui.theme import apply_app_theme, get_plotly_template
+    from ui.theme import apply_app_theme, get_plotly_template, theme_tokens
 except ImportError:
-    from market_dashboard.ui.theme import apply_app_theme, get_plotly_template
+    from market_dashboard.ui.theme import apply_app_theme, get_plotly_template, theme_tokens
+
+try:
+    from ui.components import render_quote_header, render_top_bar, watchlist_snapshot
+except ImportError:
+    from market_dashboard.ui.components import render_quote_header, render_top_bar, watchlist_snapshot
 
 try:
     from . import __version__
@@ -82,12 +91,360 @@ TRADING_PRESETS = {
     "Position Trading": {"holding_period": 20, "position_type": "Fixed", "transaction_fee": 0.0005},
 }
 
+TUTORIAL_STEPS = [
+    {
+        "Step": "1. Pick symbols",
+        "Where": "Sidebar > Stock Search or Ticker Symbols",
+        "Why it matters": "The app downloads one or more ticker histories and uses them everywhere else.",
+    },
+    {
+        "Step": "2. Choose dates and source",
+        "Where": "Sidebar > Data Selection",
+        "Why it matters": "The date range, interval, and data source control how fresh and detailed the analysis is.",
+    },
+    {
+        "Step": "3. Read the data status",
+        "Where": "Header under the title",
+        "Why it matters": "It tells you whether the app is using Yahoo, Stooq, partial data, or demo data.",
+    },
+    {
+        "Step": "4. Explore the chart",
+        "Where": "Overview or Backtest",
+        "Why it matters": "Price, moving averages, RSI, MACD, Bollinger Bands, volume, and drawdown give market context.",
+    },
+    {
+        "Step": "5. Test or practice",
+        "Where": "Backtest or Simulator",
+        "Why it matters": "Backtests automate a strategy. The simulator lets you make manual buy/sell decisions.",
+    },
+    {
+        "Step": "6. Review risk",
+        "Where": "Portfolio and Risk",
+        "Why it matters": "Correlation, drawdown, VaR, CVaR, rolling volatility, and monthly returns show what could go wrong.",
+    },
+]
+
+STOCK_TUTORIAL_ROWS = [
+    {
+        "Term": "Ticker",
+        "Meaning": "A short symbol for a traded asset, such as AAPL, MSFT, NVDA, TSLA, or SPY.",
+        "How to use it": "Enter comma-separated tickers in the sidebar, or add symbols from categories and presets.",
+    },
+    {
+        "Term": "OHLCV",
+        "Meaning": "Open, High, Low, Close, and Volume for each candle.",
+        "How to use it": "Most indicators use Close. Candlestick charts show all OHLC fields.",
+    },
+    {
+        "Term": "Interval",
+        "Meaning": "The candle size, such as 1m, 5m, 15m, 1h, or 1d.",
+        "How to use it": "Use 1d for longer research. Use intraday intervals for shorter-term practice.",
+    },
+    {
+        "Term": "Return",
+        "Meaning": "The percent change from one price to another.",
+        "How to use it": "Compare tickers, strategies, and portfolios on a percent basis rather than price alone.",
+    },
+    {
+        "Term": "Volume",
+        "Meaning": "How many shares traded during a candle.",
+        "How to use it": "Rising volume can confirm that more market participants are involved in a move.",
+    },
+]
+
+DATA_SOURCE_TUTORIAL_ROWS = [
+    {
+        "Source": "Auto",
+        "Best for": "Default research and recent data requests.",
+        "Notes": "Tries Yahoo Finance first, then Stooq for daily candles, then demo data if real data is unavailable.",
+    },
+    {
+        "Source": "Yahoo Finance",
+        "Best for": "Recent daily and intraday-friendly market data.",
+        "Notes": "Availability can vary by ticker, interval, and date range.",
+    },
+    {
+        "Source": "Stooq",
+        "Best for": "No-key daily fallback data.",
+        "Notes": "This app uses it for daily candles here.",
+    },
+    {
+        "Source": "Demo dataset",
+        "Best for": "Learning the app without relying on network data.",
+        "Notes": "Generated data is deterministic and illustrative, not real market history.",
+    },
+]
+
+INDICATOR_TUTORIAL_ROWS = [
+    {
+        "Indicator": "Moving Averages",
+        "What it shows": "Smoothed price trend over 50 and 200 periods.",
+        "Common use": "A fast average crossing above a slow average can suggest improving trend; crossing below can suggest weakening trend.",
+        "Watch out": "Moving averages lag price and can whipsaw in choppy markets.",
+    },
+    {
+        "Indicator": "RSI",
+        "What it shows": "Momentum oscillator from 0 to 100.",
+        "Common use": "Below 30 is often treated as oversold; above 70 is often treated as overbought. The mean-reversion mode watches the 50 line.",
+        "Watch out": "Strong trends can stay overbought or oversold longer than expected.",
+    },
+    {
+        "Indicator": "MACD",
+        "What it shows": "Difference between short and long exponential moving averages, plus a signal line.",
+        "Common use": "MACD crossing above its signal can suggest momentum is improving; crossing below can suggest it is weakening.",
+        "Watch out": "It is still trend-following and can lag at turning points.",
+    },
+    {
+        "Indicator": "Bollinger Bands",
+        "What it shows": "A moving average with upper and lower volatility bands.",
+        "Common use": "Touches near the lower band can suggest weakness or mean-reversion setups; upper band touches can suggest strength or stretched price.",
+        "Watch out": "A band touch is context, not a trade by itself.",
+    },
+    {
+        "Indicator": "Drawdown",
+        "What it shows": "How far price or equity has fallen from its prior peak.",
+        "Common use": "Use it to judge pain and recovery risk, not just return.",
+        "Watch out": "A high-return strategy can still be hard to tolerate if drawdowns are deep or long.",
+    },
+    {
+        "Indicator": "Correlation",
+        "What it shows": "How similarly tickers move from period to period.",
+        "Common use": "Portfolio tickers with lower correlation can diversify better.",
+        "Watch out": "Correlation changes during stress periods.",
+    },
+]
+
+STRATEGY_TUTORIAL_ROWS = [
+    {
+        "Strategy": "MA Crossover",
+        "Idea": "Buy when the shorter trend improves relative to the longer trend.",
+        "Good for": "Trend-following tests.",
+        "Main setting": "Holding period and transaction fee.",
+    },
+    {
+        "Strategy": "RSI Threshold",
+        "Idea": "Buy oversold readings and exit overbought readings.",
+        "Good for": "Simple momentum/mean-reversion comparison.",
+        "Main setting": "RSI thresholds are built into the strategy.",
+    },
+    {
+        "Strategy": "RSI Mean-Reversion",
+        "Idea": "Watch RSI crossing the 50 midpoint as a recovery/weakness signal.",
+        "Good for": "Cleaner entry and exit timing around momentum shifts.",
+        "Main setting": "Holding period and transaction fee.",
+    },
+    {
+        "Strategy": "Bollinger Bands",
+        "Idea": "Use volatility bands to detect stretched price action.",
+        "Good for": "Mean-reversion experiments.",
+        "Main setting": "Holding period and transaction fee.",
+    },
+]
+
+METRIC_TUTORIAL_ROWS = [
+    {
+        "Metric": "Total return",
+        "Meaning": "How much the strategy or asset gained or lost over the selected period.",
+        "How to read it": "Higher is better, but only after checking risk.",
+    },
+    {
+        "Metric": "Sharpe ratio",
+        "Meaning": "Return relative to volatility.",
+        "How to read it": "Higher usually means smoother risk-adjusted performance.",
+    },
+    {
+        "Metric": "Max drawdown",
+        "Meaning": "Worst peak-to-trough decline.",
+        "How to read it": "Shows the largest painful decline a user would have had to sit through.",
+    },
+    {
+        "Metric": "Win rate",
+        "Meaning": "Share of completed trades or periods that were profitable.",
+        "How to read it": "Useful, but not enough alone because winners and losers can be different sizes.",
+    },
+    {
+        "Metric": "VaR / CVaR",
+        "Meaning": "Downside risk estimates.",
+        "How to read it": "VaR is a threshold. CVaR estimates average loss beyond that threshold.",
+    },
+]
+
+GUIDED_TOUR_STEPS = [
+    {
+        "title": "Pick a simple starting universe",
+        "workflow": "Tutorial",
+        "mode": "tutorial",
+        "goal": "Start with a few familiar tickers so the rest of the app is easier to read.",
+        "action": "Use the default symbols or choose a preset in the sidebar. Keep the list small while learning.",
+        "look_for": "Ticker Symbols in the sidebar and loaded tickers in the data status strip.",
+    },
+    {
+        "title": "Confirm the data source",
+        "workflow": "Overview",
+        "mode": "overview",
+        "goal": "Make sure the chart and analysis are using the data you expect.",
+        "action": "Use Auto unless you have a reason to force Yahoo Finance, Stooq daily data, or Demo dataset.",
+        "look_for": "Requested source, actual source, latest bar, loaded tickers, and unavailable tickers.",
+    },
+    {
+        "title": "Read price context first",
+        "workflow": "Overview",
+        "mode": "overview",
+        "goal": "Understand the market before testing a strategy.",
+        "action": "Look at price direction, moving averages, RSI, MACD, Bollinger Bands, volume, and drawdown.",
+        "look_for": "Trend, momentum, stretched price action, and the worst decline from a prior high.",
+    },
+    {
+        "title": "Run a basic backtest",
+        "workflow": "Backtest",
+        "mode": "backtesting",
+        "goal": "See how a rule-based strategy behaved historically.",
+        "action": "Choose MA Crossover first, keep default fees, run the backtest, then compare it with buy-and-hold.",
+        "look_for": "Total return, Sharpe ratio, max drawdown, win rate, trade log, and benchmark comparison.",
+    },
+    {
+        "title": "Practice a manual decision",
+        "workflow": "Simulator",
+        "mode": "simulator",
+        "goal": "Learn how position size, fees, and timing change cash and equity.",
+        "action": "Open the simulator setup, preview a small buy order, then step forward through candles.",
+        "look_for": "Cash after trade, shares after trade, exposure, equity, and realized or unrealized P&L.",
+    },
+    {
+        "title": "Review portfolio and risk",
+        "workflow": "Risk",
+        "mode": "risk",
+        "goal": "Decide whether the result was worth the risk.",
+        "action": "Check drawdown, VaR, CVaR, rolling volatility, monthly returns, and correlation if using multiple tickers.",
+        "look_for": "Deep drawdowns, unstable Sharpe, high correlation, and weak months.",
+    },
+]
+
+LEARNING_SCENARIOS = [
+    {
+        "name": "Starter Overview",
+        "mode": "overview",
+        "tickers": "AAPL,MSFT,NVDA,SPY",
+        "selected_ticker": "AAPL",
+        "strategy": "None",
+        "portfolio_weights": "",
+        "description": "Load a familiar tech-and-market basket and start with the Overview chart.",
+    },
+    {
+        "name": "Trend Backtest",
+        "mode": "backtesting",
+        "tickers": "AAPL,SPY",
+        "selected_ticker": "AAPL",
+        "strategy": "MA Crossover",
+        "portfolio_weights": "",
+        "description": "Compare a simple moving-average trend strategy against buy-and-hold.",
+    },
+    {
+        "name": "RSI Practice",
+        "mode": "backtesting",
+        "tickers": "TSLA,SPY",
+        "selected_ticker": "TSLA",
+        "strategy": "RSI (Mean-Reversion)",
+        "portfolio_weights": "",
+        "description": "Try a momentum recovery strategy on a higher-volatility stock.",
+    },
+    {
+        "name": "Simulator Drill",
+        "mode": "simulator",
+        "tickers": "TSLA",
+        "selected_ticker": "TSLA",
+        "strategy": "None",
+        "portfolio_weights": "",
+        "description": "Practice manual orders, position size, cash, exposure, and P&L.",
+    },
+    {
+        "name": "ETF Portfolio",
+        "mode": "portfolio",
+        "tickers": "SPY,QQQ,IWM,TLT,GLD",
+        "selected_ticker": "SPY",
+        "strategy": "None",
+        "portfolio_weights": "SPY:0.35,QQQ:0.25,IWM:0.15,TLT:0.15,GLD:0.10",
+        "description": "Review diversification, weights, correlation, and portfolio returns.",
+    },
+    {
+        "name": "Risk Review",
+        "mode": "risk",
+        "tickers": "NVDA,SPY",
+        "selected_ticker": "NVDA",
+        "strategy": "None",
+        "portfolio_weights": "",
+        "description": "Inspect drawdown, VaR, CVaR, rolling risk, and monthly returns.",
+    },
+]
+
+WORKFLOW_HELP = {
+    "Overview": {
+        "goal": "Use Overview to answer: what loaded, what moved, and how did the selected assets behave over the chosen period?",
+        "steps": [
+            "Check the data status strip first, especially source, latest bar, and unavailable tickers.",
+            "Scan the summary table for period return and row count.",
+            "Use the price chart below to compare trend, momentum, volume, and drawdown before testing a strategy.",
+        ],
+    },
+    "Backtest": {
+        "goal": "Use Backtest to run one rule-based strategy on one ticker and compare the result with buy-and-hold.",
+        "steps": [
+            "Pick a strategy and keep defaults at first.",
+            "Set the backtest period and fees to match the kind of trading you want to test.",
+            "After running, read return together with drawdown, trade count, and benchmark comparison.",
+        ],
+    },
+    "Quant Lab": {
+        "goal": "Use Quant Lab to validate a small custom strategy function and run it through the existing backtest engine.",
+        "steps": [
+            "Start from a template, then edit only the signal logic inside strategy(data).",
+            "Validate before running so syntax, blocked operations, output shape, and timeout limits are checked.",
+            "Review the explanation, assumptions, equity curve, and trade log before trusting the result.",
+        ],
+    },
+    "Simulator": {
+        "goal": "Use Simulator to practice manual buy and sell decisions without risking money.",
+        "steps": [
+            "Pick a short date range while learning.",
+            "Preview each order before execution and watch cash, shares, equity, and exposure.",
+            "Step forward slowly and write down why you would hold, buy, or sell.",
+        ],
+    },
+    "Portfolio": {
+        "goal": "Use Portfolio to test how several tickers work together instead of judging one asset alone.",
+        "steps": [
+            "Use weights that sum roughly to your intended allocation. The app normalizes them.",
+            "Check whether returns improve without creating too much drawdown.",
+            "Use correlation to see whether the portfolio is actually diversified.",
+        ],
+    },
+    "Risk": {
+        "goal": "Use Risk to decide whether the potential return looks worth the downside.",
+        "steps": [
+            "Read max drawdown and drawdown duration before focusing on return.",
+            "Use VaR and CVaR as downside estimates, not guarantees.",
+            "Check rolling volatility and monthly returns for unstable periods.",
+        ],
+    },
+    "Settings": {
+        "goal": "Use Settings to tune the experience without changing market data.",
+        "steps": [
+            "Simple mode keeps defaults quieter for learning.",
+            "Expert mode exposes more controls for optimization and assumptions.",
+            "Light and Dark mode should now change the full app surface and charts.",
+        ],
+    },
+}
+
 SHARPE_MODES = {
     "Daily (252 days/yr)": "1d",
     "Hourly": "1h",
     "5-Minute": "5m",
     "1-Minute": "1m",
 }
+
+CHART_INDICATOR_OPTIONS = ["SMA", "EMA", "Bollinger Bands", "Volume", "RSI", "MACD"]
+COMMON_CHART_INDICATORS = ["SMA", "Volume", "RSI", "MACD"]
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -338,6 +695,41 @@ def display_order_preview(preview):
     st.markdown(f"<div class='qma-order-preview'>{''.join(cells)}</div>", unsafe_allow_html=True)
     if not preview.get("can_execute", False):
         st.caption(preview.get("reason", "Order cannot be executed."))
+
+
+def normalize_chart_indicators(selected=None):
+    """Return valid chart indicators, using common indicators by default."""
+    if selected is None:
+        selected = st.session_state.get("chart_indicators", COMMON_CHART_INDICATORS)
+    return [indicator for indicator in selected if indicator in CHART_INDICATOR_OPTIONS]
+
+
+def display_chart_indicator_controls():
+    """Render indicator controls with quick all/common/off actions."""
+    if "chart_indicators" not in st.session_state:
+        st.session_state.chart_indicators = COMMON_CHART_INDICATORS.copy()
+
+    st.markdown("**Chart Indicators**")
+    common_col, all_col, off_col = st.columns(3)
+    with common_col:
+        if st.button("Common", key="chart_indicators_common", use_container_width=True):
+            st.session_state.chart_indicators = COMMON_CHART_INDICATORS.copy()
+            st.rerun()
+    with all_col:
+        if st.button("All", key="chart_indicators_all", use_container_width=True):
+            st.session_state.chart_indicators = CHART_INDICATOR_OPTIONS.copy()
+            st.rerun()
+    with off_col:
+        if st.button("Off", key="chart_indicators_off", use_container_width=True):
+            st.session_state.chart_indicators = []
+            st.rerun()
+
+    return st.multiselect(
+        "Visible Indicators",
+        CHART_INDICATOR_OPTIONS,
+        key="chart_indicators",
+        help="Common loads SMA, Volume, RSI, and MACD. All and Off toggle the complete indicator stack.",
+    )
 
 
 def periods_per_year(interval):
@@ -636,28 +1028,45 @@ def display_trade_log(backtest_data, strategy_name):
     )
 
 
-def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_signals=None):
-    """Show candlestick chart with indicators and equity curve."""
+def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_signals=None, selected_indicators=None):
+    """Show candlestick chart with selected indicators and optional equity curve."""
     df = get_ticker_frame(data, selected_ticker)
     price = df["Close"]
+    selected_indicators = normalize_chart_indicators(selected_indicators)
+    show_sma = "SMA" in selected_indicators
+    show_ema = "EMA" in selected_indicators
+    show_bollinger = "Bollinger Bands" in selected_indicators
+    show_volume = "Volume" in selected_indicators
+    show_macd = "MACD" in selected_indicators
+    show_rsi = "RSI" in selected_indicators
     
     # Compute indicators
     ma50, ma200 = moving_averages(price)
     rsi_values = rsi(price)
     macd_line, signal = macd(price)
     upper, lower = bollinger(price)
-    
-    # Determine chart rows
-    num_rows = 5 if backtest_data is not None else 4
-    row_heights = [0.4, 0.12, 0.15, 0.1, 0.23] if num_rows == 5 else [0.5, 0.15, 0.2, 0.15]
-    
+
+    rows = [("Price Action", "price", 0.56)]
+    if show_volume:
+        rows.append(("Volume", "volume", 0.13))
+    if show_macd:
+        rows.append(("MACD", "macd", 0.16))
+    if show_rsi:
+        rows.append(("RSI", "rsi", 0.13))
+    if backtest_data is not None:
+        rows.append(("Equity Curve", "equity", 0.22))
+
+    row_lookup = {key: idx + 1 for idx, (_, key, _) in enumerate(rows)}
+    num_rows = len(rows)
+    current_theme = st.session_state.get('theme', 'dark')
+    colors = theme_tokens(current_theme)
+
     fig = sp.make_subplots(
         rows=num_rows, cols=1,
         shared_xaxes=True,
-        row_heights=row_heights,
+        row_heights=[weight for _, _, weight in rows],
         vertical_spacing=0.02,
-        subplot_titles=("Price Action", "Volume", "MACD", "RSI", "Equity Curve") if num_rows == 5 
-                      else ("Price Action", "Volume", "MACD", "RSI")
+        subplot_titles=[title for title, _, _ in rows],
     )
     
     # Row 1: Candlestick + MA + BB
@@ -668,17 +1077,29 @@ def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_s
             high=df["High"],
             low=df["Low"],
             close=df["Close"],
-            name="Price"
+            name="Price",
+            increasing_line_color=colors["success"],
+            increasing_fillcolor=colors["success"],
+            decreasing_line_color=colors["danger"],
+            decreasing_fillcolor=colors["danger"],
         ),
-        row=1, col=1
+        row=row_lookup["price"], col=1
     )
     
-    fig.add_trace(go.Scatter(x=df.index, y=ma50, name="MA50", line=dict(color="orange")), row=1, col=1)
-    if ma200 is not None:
-        fig.add_trace(go.Scatter(x=df.index, y=ma200, name="MA200", line=dict(color="red")), row=1, col=1)
-    if upper is not None and lower is not None:
-        fig.add_trace(go.Scatter(x=df.index, y=upper, name="BB Upper", line=dict(color="gray", dash="dash")), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=lower, name="BB Lower", line=dict(color="gray", dash="dash")), row=1, col=1)
+    if show_sma:
+        fig.add_trace(go.Scatter(x=df.index, y=ma50, name="SMA 50", line=dict(color=colors["primary"], width=1.4)), row=row_lookup["price"], col=1)
+        if ma200 is not None:
+            fig.add_trace(go.Scatter(x=df.index, y=ma200, name="SMA 200", line=dict(color=colors["warning"], width=1.2)), row=row_lookup["price"], col=1)
+
+    if show_ema:
+        ema12 = price.ewm(span=12).mean()
+        ema26 = price.ewm(span=26).mean()
+        fig.add_trace(go.Scatter(x=df.index, y=ema12, name="EMA 12", line=dict(color="#14b8a6", width=1.2)), row=row_lookup["price"], col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ema26, name="EMA 26", line=dict(color="#8b5cf6", width=1.2)), row=row_lookup["price"], col=1)
+
+    if show_bollinger and upper is not None and lower is not None:
+        fig.add_trace(go.Scatter(x=df.index, y=upper, name="BB Upper", line=dict(color=colors["muted"], dash="dash", width=1)), row=row_lookup["price"], col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=lower, name="BB Lower", line=dict(color=colors["muted"], dash="dash", width=1), fill="tonexty", fillcolor="rgba(125, 139, 157, 0.08)"), row=row_lookup["price"], col=1)
     
     # Add entry/exit signals if backtest active
     if backtest_data is not None and backtest_signals is not None:
@@ -691,35 +1112,39 @@ def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_s
             entry_lows = df.loc[entries_idx, "Low"]
             fig.add_trace(
                 go.Scatter(x=entries_idx, y=entry_lows, mode="markers",
-                          marker=dict(size=10, color="green", symbol="diamond"),
+                          marker=dict(size=9, color=colors["success"], symbol="triangle-up"),
                           name="Buy", showlegend=True),
-                row=1, col=1
+                row=row_lookup["price"], col=1
             )
         
         if len(exits_idx) > 0:
             exit_highs = df.loc[exits_idx, "High"]
             fig.add_trace(
                 go.Scatter(x=exits_idx, y=exit_highs, mode="markers",
-                          marker=dict(size=10, color="red", symbol="x"),
+                          marker=dict(size=9, color=colors["danger"], symbol="triangle-down"),
                           name="Sell", showlegend=True),
-                row=1, col=1
+                row=row_lookup["price"], col=1
             )
     
-    # Row 2: Volume
-    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume", marker_color="lightblue"), row=2, col=1)
+    if show_volume:
+        volume_colors = np.where(df["Close"] >= df["Open"], colors["success"], colors["danger"])
+        fig.add_trace(
+            go.Bar(x=df.index, y=df["Volume"], name="Volume", marker_color=volume_colors, opacity=0.58),
+            row=row_lookup["volume"], col=1,
+        )
     
-    # Row 3: MACD
-    if macd_line is not None and signal is not None:
-        fig.add_trace(go.Scatter(x=df.index, y=macd_line, name="MACD", line=dict(color="blue")), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=signal, name="Signal", line=dict(color="red")), row=3, col=1)
+    if show_macd and macd_line is not None and signal is not None:
+        histogram = macd_line - signal
+        hist_colors = np.where(histogram >= 0, colors["success"], colors["danger"])
+        fig.add_trace(go.Bar(x=df.index, y=histogram, name="MACD Hist", marker_color=hist_colors, opacity=0.5), row=row_lookup["macd"], col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=macd_line, name="MACD", line=dict(color=colors["primary"], width=1.4)), row=row_lookup["macd"], col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=signal, name="Signal", line=dict(color=colors["warning"], width=1.2)), row=row_lookup["macd"], col=1)
     
-    # Row 4: RSI
-    if rsi_values is not None:
-        fig.add_trace(go.Scatter(x=df.index, y=rsi_values, name="RSI", line=dict(color="purple")), row=4, col=1)
-        fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1, annotation_text="Overbought")
-        fig.add_hline(y=30, line_dash="dash", line_color="green", row=4, col=1, annotation_text="Oversold")
+    if show_rsi and rsi_values is not None:
+        fig.add_trace(go.Scatter(x=df.index, y=rsi_values, name="RSI", line=dict(color="#8b5cf6", width=1.3)), row=row_lookup["rsi"], col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color=colors["danger"], row=row_lookup["rsi"], col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color=colors["success"], row=row_lookup["rsi"], col=1)
     
-    # Row 5: Equity curve (if backtest active)
     if backtest_data is not None:
         equity = backtest_data['equity']
         # Use the full price series for buy & hold calculation, aligned with equity dates
@@ -732,33 +1157,38 @@ def display_advanced_chart(data, selected_ticker, backtest_data=None, backtest_s
             bh_equity = buy_hold_equity(aligned_price, initial_equity=100)
             
             fig.add_trace(
-                go.Scatter(x=equity.index, y=equity.values, name="Strategy", line=dict(color="blue", width=2)),
-                row=num_rows, col=1
+                go.Scatter(x=equity.index, y=equity.values, name="Strategy", line=dict(color=colors["primary"], width=2)),
+                row=row_lookup["equity"], col=1
             )
             fig.add_trace(
                 go.Scatter(x=bh_equity.index, y=bh_equity.values, name="Buy & Hold", 
-                          line=dict(color="gray", width=2, dash="dash")),
-                row=num_rows, col=1
+                          line=dict(color=colors["muted"], width=2, dash="dash")),
+                row=row_lookup["equity"], col=1
             )
         except Exception as e:
             st.warning(f"Could not display equity curve: {e}")
     
     # Layout
-    current_theme = st.session_state.get('theme', 'dark')
     template = get_plotly_template(current_theme)
     
     fig.update_layout(
-        height=900 if num_rows == 4 else 1100,
+        height=min(980, 430 + 120 * (num_rows - 1)),
         hovermode='x unified',
-        template=template
+        template=template,
+        legend=dict(orientation="h", y=1.03, x=0),
+        margin=dict(l=38, r=18, t=46, b=28),
+        xaxis_rangeslider_visible=False,
     )
     
-    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
-    fig.update_yaxes(title_text="Volume", row=2, col=1)
-    fig.update_yaxes(title_text="MACD", row=3, col=1)
-    fig.update_yaxes(title_text="RSI", row=4, col=1)
-    if num_rows == 5:
-        fig.update_yaxes(title_text="Equity ($)", row=5, col=1)
+    fig.update_yaxes(title_text="Price", row=row_lookup["price"], col=1)
+    if show_volume:
+        fig.update_yaxes(title_text="Vol", row=row_lookup["volume"], col=1)
+    if show_macd:
+        fig.update_yaxes(title_text="MACD", row=row_lookup["macd"], col=1)
+    if show_rsi:
+        fig.update_yaxes(title_text="RSI", row=row_lookup["rsi"], col=1, range=[0, 100])
+    if backtest_data is not None:
+        fig.update_yaxes(title_text="Equity", row=row_lookup["equity"], col=1)
     
     st.plotly_chart(fig, use_container_width=True)
 
@@ -773,7 +1203,7 @@ def main():
         # Initialize session state with validation
         required_session_keys = [
             'backtest_cache', 'show_welcome', 'ui_mode', 'theme', 'mode',
-            'ticker_input', 'data_source', 'simulator'
+            'ticker_input', 'data_source', 'guided_tour_active', 'guided_tour_step', 'simulator'
         ]
 
         for key in required_session_keys:
@@ -792,6 +1222,10 @@ def main():
                     st.session_state.ticker_input = DEFAULT_TICKERS
                 elif key == 'data_source':
                     st.session_state.data_source = DEFAULT_DATA_SOURCE
+                elif key == 'guided_tour_active':
+                    st.session_state.guided_tour_active = False
+                elif key == 'guided_tour_step':
+                    st.session_state.guided_tour_step = 0
                 elif key == 'simulator':
                     st.session_state.simulator = {
                         'active': False,
@@ -828,6 +1262,7 @@ def show_simulator_mode(data, selected_ticker, start, end, interval):
 
         # Simulator settings
         st.subheader("Simulator")
+        render_workflow_help("Simulator")
 
         if not st.session_state.simulator.get('autostarted'):
             st.session_state.simulator['active'] = True
@@ -1203,6 +1638,7 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
     """Handle backtesting mode logic."""
     try:
         st.subheader("Backtesting")
+        render_workflow_help("Backtest")
 
         # Get data for selected ticker
         ticker_data = extract_ticker_data(data, selected_ticker, start, end)
@@ -1217,6 +1653,10 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
         strategy_name = st.selectbox(
             "Select Strategy",
             STRATEGY_OPTIONS,
+            index=STRATEGY_OPTIONS.index(st.session_state.get("backtest_strategy_select", "None"))
+            if st.session_state.get("backtest_strategy_select", "None") in STRATEGY_OPTIONS
+            else 0,
+            key="backtest_strategy_select",
             help="Choose trading strategy to backtest"
         )
 
@@ -1455,6 +1895,258 @@ def show_backtesting_mode(data, selected_ticker, start, end, interval, enable_po
             st.code(traceback.format_exc())
 
 
+def display_quant_lab_result(result, close, config, benchmark_close, benchmark_symbol, strategy_label):
+    """Display Quant Lab results using the shared backtest views."""
+    validation = result.get("validation")
+    display_metrics_panel(result)
+
+    status_items = [
+        ("Rows Used", f"{result.get('rows_used', 0):,}"),
+        ("Elapsed", f"{result.get('elapsed_seconds', 0):.2f}s"),
+        ("Trades", len(result.get("trades", []))),
+    ]
+    if validation is not None:
+        status_items.extend([
+            ("Output", validation.output_kind),
+            ("Signal Bars", f"{validation.signal_count:,}"),
+        ])
+    render_status_strip(status_items)
+
+    if validation is not None:
+        for warning in validation.warnings:
+            st.warning(warning)
+
+    explanation = explain_strategy_result(
+        result,
+        close,
+        data_status=st.session_state.get("latest_data_status"),
+        benchmark_close=benchmark_close,
+        benchmark_label=benchmark_symbol,
+        fee_pct=float(config.get("fee_pct", 0.0)),
+    )
+    st.markdown("**Plain-English Explanation**")
+    st.info(explanation)
+
+    display_trade_log(result, strategy_label)
+    display_strategy_analytics(
+        result,
+        close,
+        config.get("interval", "1d"),
+        config,
+        benchmark_close=benchmark_close,
+        benchmark_label=benchmark_symbol,
+    )
+
+
+def show_quant_lab_workflow(data, selected_ticker, start, end, interval):
+    """Advanced workflow for safe custom strategy validation and simulation."""
+    st.subheader("Quant Lab")
+
+    if st.session_state.get("ui_mode", "simple") != "expert":
+        st.info("Quant Lab is available in Expert mode. Open Settings and switch Interface Mode to Expert.")
+        return
+
+    render_workflow_help("Quant Lab")
+
+    with st.expander("Sandbox and validation rules", expanded=False):
+        st.markdown(
+            """
+            Custom code must define exactly one `strategy(data)` function.
+            Imports, files, network access, subprocesses, reflection helpers, and pandas write methods are blocked before execution.
+            Strategy code runs in a separate process with a timeout and receives a copied, prepared market-data frame.
+            """
+        )
+
+    template_list = template_names()
+    selected_template = st.selectbox(
+        "Strategy Template",
+        template_list,
+        index=template_list.index(st.session_state.get("quant_lab_template", DEFAULT_TEMPLATE_NAME))
+        if st.session_state.get("quant_lab_template", DEFAULT_TEMPLATE_NAME) in template_list
+        else 0,
+        key="quant_lab_template",
+    )
+    template = get_template(selected_template)
+    st.caption(template["description"])
+
+    if "quant_lab_strategy_code" not in st.session_state:
+        st.session_state.quant_lab_strategy_code = get_template_code(selected_template)
+
+    load_col, validate_col, run_col = st.columns([1, 1, 1])
+    with load_col:
+        if st.button("Load Template", use_container_width=True):
+            st.session_state.quant_lab_strategy_code = get_template_code(selected_template)
+            st.rerun()
+
+    code = st.text_area(
+        "Strategy Code",
+        height=280,
+        key="quant_lab_strategy_code",
+        help="Return (buy, sell), a DataFrame with buy/sell columns, or a Series named position.",
+    )
+
+    settings_col1, settings_col2, settings_col3, settings_col4 = st.columns(4)
+    with settings_col1:
+        quant_start = st.date_input("From", value=start, key="quant_lab_start")
+    with settings_col2:
+        quant_end = st.date_input("To", value=end, key="quant_lab_end")
+    with settings_col3:
+        initial_capital = st.number_input(
+            "Starting Capital ($)",
+            min_value=100.0,
+            max_value=10_000_000.0,
+            value=10_000.0,
+            step=500.0,
+            key="quant_lab_capital",
+        )
+    with settings_col4:
+        benchmark_symbol = st.text_input(
+            "Benchmark",
+            value=st.session_state.get("quant_lab_benchmark", "SPY"),
+            key="quant_lab_benchmark",
+        ).strip().upper() or "SPY"
+
+    config_col1, config_col2, config_col3 = st.columns(3)
+    with config_col1:
+        position_type = st.radio(
+            "Position Sizing",
+            ["Fixed", "Dynamic"],
+            horizontal=True,
+            key="quant_lab_position_type",
+        )
+    with config_col2:
+        holding_period = st.number_input(
+            "Hold Days",
+            min_value=0,
+            max_value=252,
+            value=0,
+            step=1,
+            key="quant_lab_holding_period",
+        )
+    with config_col3:
+        transaction_fee = st.slider(
+            "Fee (%)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.10,
+            step=0.01,
+            key="quant_lab_fee",
+        ) / 100
+
+    if quant_start >= quant_end:
+        st.error("Quant Lab start date must be before end date.")
+        return
+
+    config = {
+        "position_type": position_type,
+        "holding_period": int(holding_period),
+        "fee_pct": float(transaction_fee),
+        "interval": interval,
+        "initial_capital": float(initial_capital),
+        "risk_free_rate": 0.02,
+    }
+
+    validate_requested = False
+    run_requested = False
+    with validate_col:
+        validate_requested = st.button("Validate", use_container_width=True)
+    with run_col:
+        run_requested = st.button("Run Simulation", type="primary", use_container_width=True)
+
+    if validate_requested:
+        with st.spinner("Validating strategy safely..."):
+            try:
+                validate_strategy_code(code)
+                ticker_data = extract_ticker_data(data, selected_ticker, quant_start, quant_end)
+                prepared_data = build_strategy_data(ticker_data)
+                validation_result = run_quant_lab_strategy(
+                    code,
+                    ticker_data,
+                    config,
+                    timeout_seconds=2.0,
+                    max_rows=min(300, len(prepared_data)),
+                )
+                validation = validation_result["validation"]
+                st.success("Strategy validated. Output shape and sandbox checks passed.")
+                render_status_strip([
+                    ("Output", validation.output_kind),
+                    ("Rows Checked", f"{validation.rows_used:,}"),
+                    ("Signal Bars", f"{validation.signal_count:,}"),
+                    ("Elapsed", f"{validation_result.get('elapsed_seconds', 0):.2f}s"),
+                ])
+                for warning in validation.warnings:
+                    st.warning(warning)
+            except (StrategyValidationError, StrategyExecutionError, QuantLabError, ValueError) as exc:
+                st.error(f"Validation failed: {exc}")
+
+    if run_requested:
+        with st.spinner("Running Quant Lab simulation..."):
+            try:
+                ticker_data = extract_ticker_data(data, selected_ticker, quant_start, quant_end)
+                result = run_quant_lab_strategy(code, ticker_data, config, timeout_seconds=2.0)
+                close = result["strategy_data"]["close"].reindex(result["equity"].index).dropna()
+                close.name = selected_ticker
+
+                benchmark_close = None
+                try:
+                    if benchmark_symbol in available_tickers(data):
+                        benchmark_close = get_ticker_frame(data, benchmark_symbol)["Close"]
+                    else:
+                        benchmark_data, benchmark_status = load_market_data(
+                            [benchmark_symbol],
+                            quant_start,
+                            quant_end,
+                            interval,
+                            source=st.session_state.get("data_source", DEFAULT_DATA_SOURCE),
+                        )
+                        if benchmark_data is not None and not benchmark_data.empty:
+                            benchmark_close = get_ticker_frame(benchmark_data, benchmark_symbol)["Close"]
+                            if benchmark_status.get("is_demo"):
+                                st.caption(f"{benchmark_symbol} benchmark is using demo data.")
+                except Exception as benchmark_error:
+                    st.caption(f"Benchmark comparison unavailable: {benchmark_error}")
+
+                strategy_label = f"Quant Lab - {selected_template}"
+                st.session_state.quant_lab_result = result
+                st.session_state.quant_lab_close = close
+                st.session_state.quant_lab_config = config
+                st.session_state.quant_lab_strategy_label = strategy_label
+                st.session_state.quant_lab_ticker = selected_ticker
+                st.session_state.quant_lab_benchmark_close = benchmark_close
+                st.session_state.quant_lab_benchmark_symbol = benchmark_symbol
+
+                st.session_state.backtest_result = result
+                st.session_state.backtest_metrics = result
+                st.session_state.backtest_close = close
+                st.session_state.backtest_config = config
+                st.session_state.backtest_ticker = selected_ticker
+                st.session_state.backtest_strategy_name = strategy_label
+                st.session_state.strategy_name = strategy_label
+                st.session_state.backtest_benchmark_close = benchmark_close
+                st.session_state.backtest_benchmark_symbol = benchmark_symbol
+
+                st.success("Quant Lab simulation completed.")
+                display_quant_lab_result(result, close, config, benchmark_close, benchmark_symbol, strategy_label)
+            except (StrategyValidationError, StrategyExecutionError, QuantLabError, ValueError) as exc:
+                st.error(f"Simulation failed safely: {exc}")
+
+    stored_result_matches = (
+        not run_requested
+        and st.session_state.get("quant_lab_ticker") == selected_ticker
+        and st.session_state.get("quant_lab_result") is not None
+    )
+    if stored_result_matches:
+        st.subheader("Latest Quant Lab Result")
+        display_quant_lab_result(
+            st.session_state.quant_lab_result,
+            st.session_state.get("quant_lab_close", pd.Series(dtype=float)),
+            st.session_state.get("quant_lab_config", config),
+            st.session_state.get("quant_lab_benchmark_close"),
+            st.session_state.get("quant_lab_benchmark_symbol", "SPY"),
+            st.session_state.get("quant_lab_strategy_label", "Quant Lab"),
+        )
+
+
 def show_main_content(data, selected_ticker, start, end, interval, mode, enable_portfolio, portfolio_weight_input, rebalance_period, enable_risk, stop_loss_pct, take_profit_pct, enable_optimizer, optimizer_strategy, optimizer_strat_hold, optimizer_strat_fee):
     """Display main content based on selected mode."""
     try:
@@ -1587,10 +2279,25 @@ def show_analysis_mode(data, selected_ticker, start, end, interval):
             # Indicator selection
             col1, col2 = st.columns(2)
             with col1:
+                if "analysis_indicators" not in st.session_state:
+                    st.session_state.analysis_indicators = COMMON_CHART_INDICATORS.copy()
+                action_cols = st.columns(3)
+                with action_cols[0]:
+                    if st.button("Common", key="analysis_indicators_common", use_container_width=True):
+                        st.session_state.analysis_indicators = COMMON_CHART_INDICATORS.copy()
+                        st.rerun()
+                with action_cols[1]:
+                    if st.button("All", key="analysis_indicators_all", use_container_width=True):
+                        st.session_state.analysis_indicators = CHART_INDICATOR_OPTIONS.copy()
+                        st.rerun()
+                with action_cols[2]:
+                    if st.button("Off", key="analysis_indicators_off", use_container_width=True):
+                        st.session_state.analysis_indicators = []
+                        st.rerun()
                 selected_indicators = st.multiselect(
                     "Technical Indicators",
-                    ["SMA", "EMA", "RSI", "MACD", "Bollinger Bands", "Volume"],
-                    default=["SMA", "RSI"],
+                    CHART_INDICATOR_OPTIONS,
+                    key="analysis_indicators",
                     help="Select indicators to display on the chart"
                 )
 
@@ -1881,9 +2588,350 @@ def parse_portfolio_weights(weight_input, tickers):
     return {symbol: value / total for symbol, value in weights.items()}
 
 
+def tutorial_table(rows, height=None):
+    """Render tutorial rows as a compact dataframe."""
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=height)
+
+
+def apply_learning_scenario(scenario: dict):
+    """Apply an optional learning scenario to session state."""
+    workflow_by_mode = {
+        "overview": "Overview",
+        "tutorial": "Tutorial",
+        "backtesting": "Backtest",
+        "simulator": "Simulator",
+        "portfolio": "Portfolio",
+        "risk": "Risk",
+        "settings": "Settings",
+    }
+    st.session_state.ticker_input = scenario["tickers"]
+    st.session_state.data_source = DEFAULT_DATA_SOURCE
+    st.session_state.mode = scenario["mode"]
+    st.session_state.workflow_selector = workflow_by_mode.get(scenario["mode"], "Overview")
+    st.session_state.selected_workflow_ticker = scenario["selected_ticker"]
+    st.session_state.backtest_strategy_select = scenario["strategy"]
+    st.session_state.portfolio_weight_input = scenario.get("portfolio_weights", "")
+    st.session_state.scenario_message = f"Loaded scenario: {scenario['name']}. {scenario['description']}"
+    st.session_state.show_welcome = False
+
+
+def queue_learning_scenario(scenario: dict):
+    """Queue a scenario so it can be applied before widgets are created."""
+    st.session_state.pending_learning_scenario = scenario["name"]
+    st.session_state.show_welcome = False
+
+
+def apply_pending_learning_scenario():
+    """Apply a queued scenario before Streamlit widgets are instantiated."""
+    scenario_name = st.session_state.pop("pending_learning_scenario", None)
+    if not scenario_name:
+        return
+
+    scenario = next((item for item in LEARNING_SCENARIOS if item["name"] == scenario_name), None)
+    if scenario is not None:
+        apply_learning_scenario(scenario)
+
+
+def render_learning_scenarios():
+    """Render optional scenario launchers for guided examples."""
+    st.markdown("**Learning scenarios**")
+    st.caption("These are optional presets. They set tickers and the target workflow, then you can adjust anything.")
+
+    scenario_rows = [
+        {
+            "Scenario": scenario["name"],
+            "Tickers": scenario["tickers"],
+            "Workflow": scenario["mode"].title(),
+            "Purpose": scenario["description"],
+        }
+        for scenario in LEARNING_SCENARIOS
+    ]
+    tutorial_table(scenario_rows, height=245)
+
+    cols = st.columns(3)
+    for idx, scenario in enumerate(LEARNING_SCENARIOS):
+        with cols[idx % 3]:
+            st.markdown(f"**{scenario['name']}**")
+            st.caption(scenario["description"])
+            if st.button(f"Load {scenario['name']}", key=f"scenario_{idx}", use_container_width=True):
+                queue_learning_scenario(scenario)
+                st.rerun()
+
+
+def render_workflow_help(workflow: str):
+    """Render optional contextual help for a workflow."""
+    help_data = WORKFLOW_HELP.get(workflow)
+    if not help_data:
+        return
+
+    with st.expander(f"How to use {workflow}", expanded=False):
+        st.markdown(f"**Goal:** {help_data['goal']}")
+        for step in help_data["steps"]:
+            st.markdown(f"- {step}")
+
+
+def start_guided_tour(step: int = 0, mode: str = "tutorial"):
+    """Start the optional guided walkthrough."""
+    st.session_state.guided_tour_active = True
+    st.session_state.guided_tour_step = max(0, min(int(step), len(GUIDED_TOUR_STEPS) - 1))
+    st.session_state.mode = mode
+    st.session_state.show_welcome = False
+
+
+def stop_guided_tour():
+    """Stop the optional guided walkthrough."""
+    st.session_state.guided_tour_active = False
+
+
+def guided_tour_step_index() -> int:
+    """Return a valid guided tour step index."""
+    raw_step = st.session_state.get("guided_tour_step", 0)
+    try:
+        step = int(raw_step)
+    except (TypeError, ValueError):
+        step = 0
+    step = max(0, min(step, len(GUIDED_TOUR_STEPS) - 1))
+    st.session_state.guided_tour_step = step
+    return step
+
+
+def render_guided_tour_launcher():
+    """Render the optional walkthrough launcher."""
+    if st.session_state.get("guided_tour_active", False):
+        st.success("Guided walkthrough is on. Use the walkthrough panel above each workflow to continue or end it.")
+        return
+
+    st.markdown("**Optional guided walkthrough**")
+    st.caption(
+        "Turn this on if you want the app to guide you one step at a time. "
+        "It will not start unless you choose it, and you can end it any time."
+    )
+    if st.button("Start Guided Walkthrough", type="primary", key="start_guided_walkthrough"):
+        start_guided_tour()
+        st.rerun()
+
+
+def render_guided_tour_panel(current_workflow: str):
+    """Render the active guided walkthrough panel."""
+    if not st.session_state.get("guided_tour_active", False):
+        return
+
+    step_index = guided_tour_step_index()
+    step = GUIDED_TOUR_STEPS[step_index]
+    total_steps = len(GUIDED_TOUR_STEPS)
+    target_workflow = step["workflow"]
+    is_target_workflow = current_workflow == target_workflow
+
+    st.markdown(
+        f"""
+        <div class='qma-panel' style='margin: 0.75rem 0;'>
+            <span class='qma-status'>Guided Walkthrough</span>
+            <h3 style='margin: 0.55rem 0 0.25rem;'>Step {step_index + 1} of {total_steps}: {html.escape(step['title'])}</h3>
+            <p class='qma-muted' style='margin: 0 0 0.6rem;'>{html.escape(step['goal'])}</p>
+            <p style='margin: 0.2rem 0;'><strong>Do this:</strong> {html.escape(step['action'])}</p>
+            <p style='margin: 0.2rem 0;'><strong>Look for:</strong> {html.escape(step['look_for'])}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_status_strip([
+        ("Progress", f"{step_index + 1} of {total_steps}"),
+        ("You Are In", current_workflow),
+        ("Suggested Workflow", target_workflow),
+        ("Status", "You are here" if is_target_workflow else "Jump available"),
+    ])
+
+    prev_col, go_col, next_col, end_col = st.columns(4)
+    with prev_col:
+        if st.button("Previous Step", disabled=step_index == 0, key="guided_prev"):
+            st.session_state.guided_tour_step = max(0, step_index - 1)
+            st.rerun()
+    with go_col:
+        if st.button(f"Go to {target_workflow}", disabled=is_target_workflow, key="guided_go"):
+            st.session_state.mode = step["mode"]
+            st.rerun()
+    with next_col:
+        next_label = "Finish Tour" if step_index == total_steps - 1 else "Next Step"
+        if st.button(next_label, type="primary", key="guided_next"):
+            if step_index == total_steps - 1:
+                stop_guided_tour()
+            else:
+                st.session_state.guided_tour_step = step_index + 1
+            st.rerun()
+    with end_col:
+        if st.button("End Tour", key="guided_end"):
+            stop_guided_tour()
+            st.rerun()
+
+
+def show_tutorial_workflow(data, tickers, selected_ticker, interval):
+    """Show an in-app guide for stocks, indicators, workflows, and simulator use."""
+    st.subheader("Tutorial")
+
+    loaded = available_tickers(data)
+    status = st.session_state.get("latest_data_status", {})
+    render_status_strip([
+        ("Current Ticker", selected_ticker),
+        ("Loaded Tickers", ", ".join(loaded) if loaded else "None"),
+        ("Interval", interval),
+        ("Data Source", status.get("source", st.session_state.get("data_source", DEFAULT_DATA_SOURCE))),
+        ("Latest Bar", status.get("latest_bar", "N/A")),
+    ])
+
+    st.caption(
+        "Use this guide as a map for the app. It explains the market terms, the indicators on the chart, "
+        "and the workflow order for research, backtesting, manual simulation, portfolio review, and risk checks."
+    )
+
+    start_tab, scenarios_tab, stocks_tab, indicators_tab, backtest_tab, simulator_tab, risk_tab = st.tabs([
+        "Start Here",
+        "Scenarios",
+        "Stocks & Data",
+        "Indicators",
+        "Backtesting",
+        "Simulator",
+        "Risk & Metrics",
+    ])
+
+    with start_tab:
+        render_guided_tour_launcher()
+        st.divider()
+        st.markdown("**A good first session**")
+        tutorial_table(TUTORIAL_STEPS, height=255)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(
+                """
+                **Beginner path**
+
+                1. Keep the default ticker list.
+                2. Keep `Auto` as the data source.
+                3. Open `Overview` and inspect the price chart.
+                4. Open `Backtest`, pick `MA Crossover`, and run it.
+                5. Compare the strategy line against buy-and-hold.
+                """
+            )
+        with col2:
+            st.markdown(
+                """
+                **Practice path**
+
+                1. Choose one ticker.
+                2. Open `Simulator`.
+                3. Use the order preview before buying or selling.
+                4. Step through time and watch cash, shares, equity, and P&L.
+                5. Review drawdown and risk afterward.
+                """
+            )
+
+    with scenarios_tab:
+        render_learning_scenarios()
+
+    with stocks_tab:
+        st.markdown("**Stock market basics used by this app**")
+        tutorial_table(STOCK_TUTORIAL_ROWS, height=245)
+
+        st.markdown("**Data sources**")
+        tutorial_table(DATA_SOURCE_TUTORIAL_ROWS, height=180)
+        st.info(
+            "Recent data can still be delayed or unavailable depending on the provider, ticker, interval, and market schedule. "
+            "Always check the status strip before interpreting a chart or backtest."
+        )
+
+    with indicators_tab:
+        st.markdown("**Indicators on the chart**")
+        tutorial_table(INDICATOR_TUTORIAL_ROWS, height=330)
+
+        st.markdown(
+            """
+            **How to combine indicators**
+
+            - Use price trend first: is the chart making higher highs, lower lows, or moving sideways?
+            - Use moving averages for trend context.
+            - Use RSI and MACD for momentum context.
+            - Use Bollinger Bands for volatility and stretched price context.
+            - Use volume to check whether a move has participation.
+            - Treat indicators as evidence, not guarantees.
+            """
+        )
+
+    with backtest_tab:
+        st.markdown("**Strategies available in Backtest**")
+        tutorial_table(STRATEGY_TUTORIAL_ROWS, height=220)
+
+        st.markdown(
+            """
+            **How to run a backtest**
+
+            1. Choose the ticker in `Ticker for single-asset workflows`.
+            2. Open `Backtest`.
+            3. Pick a strategy.
+            4. Choose the backtest period.
+            5. Set position sizing, holding period, and fees.
+            6. Run the backtest.
+            7. Read total return, Sharpe ratio, drawdown, win rate, trade log, and strategy comparison.
+
+            A backtest is a historical experiment. It does not prove a strategy will keep working.
+            """
+        )
+
+    with simulator_tab:
+        st.markdown(
+            """
+            **What the simulator is for**
+
+            The simulator is a risk-free practice mode. It uses historical candles and lets you decide when to buy,
+            sell, step forward, or reset. It is useful for learning position sizing, patience, and how quickly a trade
+            can change cash, exposure, and P&L.
+            """
+        )
+
+        simulator_rows = [
+            {
+                "Control": "Simulation Setup",
+                "Purpose": "Pick the period, starting capital, and transaction fee.",
+                "Tip": "Use a shorter period while learning so the session moves quickly.",
+            },
+            {
+                "Control": "Buy / Sell",
+                "Purpose": "Place manual trades with a preview before execution.",
+                "Tip": "Check trade value, fee, cash after, shares after, and exposure before submitting.",
+            },
+            {
+                "Control": "Step controls",
+                "Purpose": "Move through historical candles.",
+                "Tip": "Pause after large moves and decide whether your plan changed.",
+            },
+            {
+                "Control": "Reset",
+                "Purpose": "Restart the simulation.",
+                "Tip": "Use reset when you want to test a different decision path on the same data.",
+            },
+        ]
+        tutorial_table(simulator_rows, height=200)
+
+    with risk_tab:
+        st.markdown("**Metrics you will see across the app**")
+        tutorial_table(METRIC_TUTORIAL_ROWS, height=230)
+
+        st.markdown(
+            """
+            **Risk review checklist**
+
+            - Compare return against drawdown, not just against other returns.
+            - Check whether a strategy only wins because of one lucky period.
+            - Use correlation before assuming a group of tickers is diversified.
+            - Use rolling volatility and rolling Sharpe to see whether behavior changes over time.
+            - Use monthly returns to spot streaks, weak seasons, and outlier months.
+            """
+        )
+
+
 def show_overview_workflow(data, tickers, selected_ticker, interval):
     """Show a compact landing workflow with market snapshot and setup state."""
     st.subheader("Overview")
+    render_workflow_help("Overview")
 
     loaded_tickers = available_tickers(data)
     if not loaded_tickers:
@@ -1916,6 +2964,7 @@ def show_overview_workflow(data, tickers, selected_ticker, interval):
 def show_portfolio_workflow(data, tickers, interval):
     """Show portfolio-specific settings and results."""
     st.subheader("Portfolio")
+    render_workflow_help("Portfolio")
     loaded_tickers = available_tickers(data)
     if len(loaded_tickers) < 2:
         st.info("Portfolio analysis needs at least two loaded tickers. Add more symbols in the sidebar.")
@@ -1972,6 +3021,7 @@ def show_portfolio_workflow(data, tickers, interval):
 def show_risk_workflow(data, selected_ticker, interval):
     """Show risk metrics and rolling risk charts for the selected ticker."""
     st.subheader("Risk")
+    render_workflow_help("Risk")
     try:
         ticker_data = get_ticker_frame(data, selected_ticker)
         close = pd.to_numeric(ticker_data["Close"], errors="coerce").dropna()
@@ -2007,6 +3057,7 @@ def show_risk_workflow(data, selected_ticker, interval):
 def show_settings_workflow():
     """Show app preferences in a top-level workflow."""
     st.subheader("Settings")
+    render_workflow_help("Settings")
     col1, col2 = st.columns(2)
     with col1:
         ui_mode = st.radio(
@@ -2036,6 +3087,8 @@ def show_settings_workflow():
 def show_main_dashboard():
     """Main dashboard display function."""
     try:
+        apply_pending_learning_scenario()
+
         # Sidebar configuration
         with st.sidebar:
             sidebar_params = show_sidebar()
@@ -2049,17 +3102,9 @@ def show_main_dashboard():
         interval = sidebar_params['interval']
         data_source = sidebar_params.get('data_source', st.session_state.get("data_source", DEFAULT_DATA_SOURCE))
         show_price = sidebar_params['show_price']
+        chart_indicators = sidebar_params.get('chart_indicators', COMMON_CHART_INDICATORS)
         show_drawdown = sidebar_params['show_drawdown']
         show_corr = sidebar_params['show_corr']
-
-        tickers_label = ", ".join(tickers)
-        st.title("Quant Market Analytics")
-        st.markdown(
-            f"<span class='qma-status'>Ready</span> "
-            f"<span class='qma-muted'>{tickers_label} | {start} to {end} | {interval} | {data_source}</span>",
-            unsafe_allow_html=True,
-        )
-        display_beginner_glossary()
 
         # Download data
         with st.spinner("Downloading market data..."):
@@ -2072,24 +3117,37 @@ def show_main_dashboard():
                 st.error(f"Failed to download data: {e}")
                 return
 
-        display_data_status(st.session_state.get("latest_data_status"))
+        if st.session_state.get("scenario_message"):
+            st.success(st.session_state.scenario_message)
+            del st.session_state.scenario_message
 
         loaded_tickers = available_tickers(data)
         if not loaded_tickers:
             st.error("No tickers loaded")
             return
 
-        workflow_options = ["Overview", "Backtest", "Simulator", "Portfolio", "Risk", "Settings"]
+        with st.sidebar:
+            st.divider()
+            st.subheader("Watchlist")
+            st.dataframe(watchlist_snapshot(data, loaded_tickers), use_container_width=True, hide_index=True)
+
+        workflow_options = ["Overview", "Tutorial", "Backtest", "Simulator", "Portfolio", "Risk", "Settings"]
+        if st.session_state.get("ui_mode", "simple") == "expert":
+            workflow_options.insert(5, "Quant Lab")
         mode_to_workflow = {
             "overview": "Overview",
             "analysis": "Overview",
+            "tutorial": "Tutorial",
             "backtesting": "Backtest",
             "simulator": "Simulator",
             "portfolio": "Portfolio",
+            "quant_lab": "Quant Lab",
             "risk": "Risk",
             "settings": "Settings",
         }
         current_workflow = mode_to_workflow.get(st.session_state.get("mode", "backtesting"), "Backtest")
+        if current_workflow not in workflow_options:
+            current_workflow = "Backtest"
         workflow = st.radio(
             "Workflow",
             workflow_options,
@@ -2099,14 +3157,29 @@ def show_main_dashboard():
         )
         workflow_to_mode = {
             "Overview": "overview",
+            "Tutorial": "tutorial",
             "Backtest": "backtesting",
             "Simulator": "simulator",
             "Portfolio": "portfolio",
+            "Quant Lab": "quant_lab",
             "Risk": "risk",
             "Settings": "settings",
         }
         st.session_state.mode = workflow_to_mode[workflow]
         is_simulator_mode = workflow == "Simulator"
+
+        render_top_bar(
+            "Quant Market Analytics",
+            loaded_tickers,
+            workflow,
+            st.session_state.get("latest_data_status"),
+            st.session_state.get("ui_mode", "simple"),
+            st.session_state.get("theme", "dark"),
+        )
+        display_data_status(st.session_state.get("latest_data_status"))
+        display_beginner_glossary()
+
+        render_guided_tour_panel(workflow)
 
         selected_index = 0
         if tickers and tickers[0] in loaded_tickers:
@@ -2119,9 +3192,12 @@ def show_main_dashboard():
             index=selected_index,
             key="selected_workflow_ticker",
         )
+        render_quote_header(data, selected_ticker, st.session_state.get("latest_data_status"))
 
         if workflow == "Overview":
             show_overview_workflow(data, loaded_tickers, selected_ticker, interval)
+        elif workflow == "Tutorial":
+            show_tutorial_workflow(data, loaded_tickers, selected_ticker, interval)
         elif workflow == "Backtest":
             show_backtesting_mode(
                 data,
@@ -2144,13 +3220,15 @@ def show_main_dashboard():
             show_simulator_mode(data, selected_ticker, start, end, interval)
         elif workflow == "Portfolio":
             show_portfolio_workflow(data, loaded_tickers, interval)
+        elif workflow == "Quant Lab":
+            show_quant_lab_workflow(data, selected_ticker, start, end, interval)
         elif workflow == "Risk":
             show_risk_workflow(data, selected_ticker, interval)
         elif workflow == "Settings":
             show_settings_workflow()
 
         # Display additional charts if enabled
-        if show_price and workflow in {"Overview", "Backtest"}:
+        if show_price and workflow in {"Overview", "Backtest", "Quant Lab"}:
             st.subheader("Price Action & Technical Indicators")
             backtest_signals = None
             chart_backtest_result = None
@@ -2164,12 +3242,12 @@ def show_main_dashboard():
                     'entries': chart_backtest_result['entries'],
                     'exits': chart_backtest_result['exits']
                 }
-            display_advanced_chart(data, selected_ticker, chart_backtest_result, backtest_signals)
+            display_advanced_chart(data, selected_ticker, chart_backtest_result, backtest_signals, chart_indicators)
         elif show_price and is_simulator_mode:
             st.subheader("Simulator Chart")
             display_simulator_chart(data, selected_ticker)
 
-        if show_drawdown and workflow in {"Overview", "Backtest"}:
+        if show_drawdown and workflow in {"Overview", "Backtest", "Quant Lab"}:
             st.subheader("Drawdown Analysis")
             close_data = get_ticker_frame(data, selected_ticker)["Close"]
             dd = close_data / close_data.cummax() - 1
@@ -2183,7 +3261,7 @@ def show_main_dashboard():
             )
             st.plotly_chart(fig, use_container_width=True)
 
-        if show_corr and workflow in {"Overview", "Backtest", "Portfolio"}:
+        if show_corr and workflow in {"Overview", "Backtest", "Quant Lab", "Portfolio"}:
             st.subheader("Correlation Matrix")
             close_for_corr = get_close_prices(data)
             returns = compute_returns(close_for_corr)
@@ -2363,6 +3441,7 @@ def show_sidebar():
             show_drawdown = st.toggle("Drawdown", value=True)
         with col3:
             show_corr = st.toggle("Correlation", value=True)
+        chart_indicators = display_chart_indicator_controls() if show_price else []
 
         # Workflow-specific settings now live in the relevant top-level workflow.
         enable_portfolio = False
@@ -2433,6 +3512,7 @@ def show_sidebar():
             'interval': interval,
             'data_source': data_source,
             'show_price': show_price,
+            'chart_indicators': chart_indicators,
             'show_drawdown': show_drawdown,
             'show_corr': show_corr,
             'is_simulator_mode': is_simulator_mode,
@@ -3496,7 +4576,7 @@ def show_welcome_dashboard():
     # Quick start options
     st.markdown("### Quick Start")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown("""
@@ -3540,6 +4620,23 @@ def show_welcome_dashboard():
         if st.button("Explore Stocks", type="primary", use_container_width=True):
             st.session_state.show_welcome = False
             st.session_state.mode = "analysis"
+            st.rerun()
+
+    with col4:
+        st.markdown("""
+        **Tutorial**
+        - Learn the app workflow
+        - Understand indicators
+        - Read risk metrics
+        """)
+
+        if st.button("Open Tutorial", type="primary", use_container_width=True):
+            st.session_state.show_welcome = False
+            st.session_state.mode = "tutorial"
+            st.rerun()
+
+        if st.button("Start Guided Tour", use_container_width=True):
+            start_guided_tour()
             st.rerun()
     
     st.divider()
@@ -3597,7 +4694,7 @@ def show_welcome_dashboard():
         ui_mode = st.radio(
             "Interface Mode",
             ["Simple", "Expert"],
-            index=0,
+            index=0 if st.session_state.get("ui_mode", "simple") == "simple" else 1,
             help="Simple: Guided experience | Expert: Full controls"
         )
         st.session_state.ui_mode = ui_mode.lower()
@@ -3606,7 +4703,7 @@ def show_welcome_dashboard():
         theme = st.radio(
             "Theme",
             ["Dark", "Light"],
-            index=0,
+            index=0 if st.session_state.get("theme", "dark") == "dark" else 1,
             help="Chart and interface theme"
         )
         if st.session_state.get('theme') != theme.lower():
