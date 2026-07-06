@@ -48,6 +48,8 @@ env/
 *.cache
 data/
 cache/
+workspace.json
+workspace_state.json
 
 # Logs
 *.log
