@@ -14,7 +14,7 @@ import pandas as pd
 from .data import get_ticker_frame
 from .indicators import bollinger, moving_averages, rsi
 from .bot_model_pack import build_model_pack, write_model_pack
-from .strategies import BollingerBandsStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
+from .strategies import BollingerBandsStrategy, BullPullbackStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
 
 
 STYLE_CONFIG = {
@@ -25,6 +25,7 @@ STYLE_CONFIG = {
 STRATEGIES = {
     "ma_crossover": MovingAverageCrossover,
     "trend_momentum": TrendMomentumStrategy,
+    "bull_pullback": BullPullbackStrategy,
     "rsi_threshold": lambda **kwargs: RSIStrategy(mode="threshold", **kwargs),
     "rsi_mean_reversion": lambda **kwargs: RSIStrategy(mode="mean_reversion", **kwargs),
     "bollinger": BollingerBandsStrategy,
@@ -50,6 +51,7 @@ DEFAULT_PAPER_LEDGER_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_paper.json"
 )
 ENTRY_VALID_BARS = 3
+EXECUTION_PLAN_VERSION = "daily-bars-v2"
 
 
 def _indicators(close):
@@ -89,6 +91,18 @@ def _folds(length, folds, warmup):
         raise ValueError(f"need at least {warmup + folds * 10} rows")
     edges = np.linspace(warmup, length, folds + 1, dtype=int)
     return [(int(edges[i]), int(edges[i + 1])) for i in range(folds)]
+
+
+def _bracket_exit(bar, entry, stop, target, *, fill_bar=False):
+    """Conservative long-bracket exit from daily OHLC data."""
+    opening = float(bar["Open"])
+    if fill_bar and entry <= stop:
+        return entry, "gap_stop"
+    if float(bar["Low"]) <= stop:
+        return min(opening, stop), "stop"
+    if not fill_bar and float(bar["High"]) >= target:
+        return target, "target"
+    return None, ""
 
 
 def evaluate_candidate(data, universe, candidate, *, folds=4, warmup=200, cost_bps_per_side=10):
@@ -231,17 +245,17 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                     index += 1
                     continue
                 entry = min(float(frame["Open"].iloc[fill_index]), limit_entry)
-                if not stop < entry < target:
+                if not np.isfinite(entry) or entry <= 0 or entry >= target:
                     index += 1
                     continue
                 exit_index = min(fill_index + config["holding_period"], end) - 1
                 exit_price = None
                 for row in range(fill_index, exit_index + 1):
-                    if float(frame["Low"].iloc[row]) <= stop:
-                        exit_index, exit_price = row, stop
-                        break
-                    if float(frame["High"].iloc[row]) >= target:
-                        exit_index, exit_price = row, target
+                    exit_price, _ = _bracket_exit(
+                        frame.iloc[row], entry, stop, target, fill_bar=row == fill_index
+                    )
+                    if exit_price is not None:
+                        exit_index = row
                         break
                 if exit_price is None and fill_index + config["holding_period"] <= end:
                     exit_price = float(close.iloc[exit_index])
@@ -387,6 +401,7 @@ def _paper_plan_id(row, cost_bps_per_side):
         f"stop={row.get('stop_atr', config['stop_atr']):g}atr:"
         f"target={row.get('target_r', config['target_r']):g}r:"
         f"entry={row.get('entry_valid_bars', ENTRY_VALID_BARS)}:"
+        f"engine={EXECUTION_PLAN_VERSION}:"
         f"cost={cost_bps_per_side:g}bps:"
         f"news={row.get('news_version', 'news-unversioned')}"
     )
@@ -455,19 +470,22 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
             fill_date, fill_bar = fill
             position["entry_date"] = str(fill_date.date())
             position["entry"] = min(float(fill_bar["Open"]), float(position["limit_entry"]))
-            if not position["stop"] < position["entry"] < position["target"]:
-                ledger["cancelled"].append({**position, "reason": "opening gap invalidated bracket"})
+            if not np.isfinite(position["entry"]) or position["entry"] <= 0 or position["entry"] >= position["target"]:
+                ledger["cancelled"].append({**position, "reason": "invalid fill price"})
                 continue
         holding = frame.loc[frame.index >= pd.Timestamp(position["entry_date"])].head(int(position["max_hold"]))
         exit_price = None
         exit_reason = ""
         exit_date = None
         for date, bar in holding.iterrows():
-            if float(bar["Low"]) <= position["stop"]:
-                exit_price, exit_reason = position["stop"], "stop"
-            elif float(bar["High"]) >= position["target"]:
-                exit_price, exit_reason = position["target"], "target"
-            elif date == holding.index[-1] and len(holding) >= position["max_hold"]:
+            exit_price, exit_reason = _bracket_exit(
+                bar,
+                position["entry"],
+                position["stop"],
+                position["target"],
+                fill_bar=date == pd.Timestamp(position["entry_date"]),
+            )
+            if not exit_reason and date == holding.index[-1] and len(holding) >= position["max_hold"]:
                 exit_price, exit_reason = float(bar["Close"]), "time"
             if exit_reason:
                 exit_date = str(date.date())

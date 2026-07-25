@@ -1,11 +1,24 @@
 import pandas as pd
 
-from market_dashboard.modules.strategies import Strategy
+from market_dashboard.modules.strategies import BullPullbackStrategy, Strategy
 
 
 class FixedSignalStrategy(Strategy):
     def generate_signals(self, price, indicators_dict):
         return indicators_dict["signals"].reindex(price.index).fillna(0.0)
+
+
+def test_bull_pullback_waits_one_bar_and_exits_when_stretched():
+    index = pd.date_range("2026-01-01", periods=5, freq="B")
+    indicators = {
+        "ma50": pd.Series([2, 2, 2, 2, 2], index=index),
+        "ma200": pd.Series([1, 1, 1, 1, 1], index=index),
+        "rsi": pd.Series([35, 42, 55, 72, 65], index=index),
+    }
+
+    signal = BullPullbackStrategy().generate_signals(pd.Series(range(5), index=index), indicators)
+
+    assert signal.tolist() == [0, 0, 1, 1, 0]
 
 
 def test_no_signals_keeps_equity_flat_and_no_trades():

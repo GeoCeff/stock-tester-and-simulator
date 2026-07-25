@@ -297,6 +297,28 @@ class TrendMomentumStrategy(Strategy):
         return signal.shift(1).fillna(False).astype(float)
 
 
+class BullPullbackStrategy(Strategy):
+    """Buy RSI recovery inside a long-term uptrend and exit when stretched."""
+
+    def generate_signals(self, price, indicators_dict):
+        ma50 = indicators_dict.get("ma50")
+        ma200 = indicators_dict.get("ma200")
+        rsi_values = indicators_dict.get("rsi")
+        if ma50 is None or ma200 is None or rsi_values is None:
+            return pd.Series(0.0, index=price.index, dtype=float)
+        buy = (ma50 > ma200) & (rsi_values > 40) & (rsi_values.shift(1) <= 40)
+        sell = (rsi_values >= 70) | (ma50 <= ma200)
+        signal = pd.Series(0.0, index=price.index, dtype=float)
+        active = False
+        for index in range(len(price)):
+            if bool(sell.iloc[index]):
+                active = False
+            if bool(buy.iloc[index]):
+                active = True
+            signal.iloc[index] = float(active)
+        return signal.shift(1).fillna(0.0)
+
+
 class RSIStrategy(Strategy):
     """RSI-based strategy with two modes: threshold and mean-reversion."""
 

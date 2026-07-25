@@ -138,6 +138,69 @@ def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
     assert ledger["closed"][0]["return"] < 0
 
 
+def test_paper_ledger_does_not_assume_fill_bar_target_sequence(tmp_path):
+    dates = pd.date_range("2026-01-05", periods=2, freq="B")
+    data = pd.DataFrame({
+        ("Open", "TEST"): [100, 101],
+        ("High", "TEST"): [101, 106],
+        ("Low", "TEST"): [99, 99.5],
+        ("Close", "TEST"): [100, 103],
+    }, index=dates)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    entry = {
+        "symbol": "TEST",
+        "side": "LONG",
+        "style": "SWING_20D",
+        "strategy": "trend_momentum",
+        "signal_date": "2026-01-05",
+        "entry": 100,
+        "stop": 95,
+        "target": 105,
+        "max_hold": 20,
+        "status": "PAPER_CANDIDATE",
+    }
+    path = tmp_path / "paper.json"
+
+    update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data.iloc[:1], path=path)
+    summary = update_paper_ledger({"created_at": "2026-01-06T22:00:00Z", "entries": [entry]}, data, path=path)
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+
+    assert summary["closed_trades"] == 0
+    assert ledger["positions"][0]["entry_date"] == "2026-01-06"
+
+
+def test_paper_ledger_records_opening_gap_below_stop(tmp_path):
+    dates = pd.date_range("2026-01-05", periods=2, freq="B")
+    data = pd.DataFrame({
+        ("Open", "TEST"): [100, 90],
+        ("High", "TEST"): [101, 92],
+        ("Low", "TEST"): [99, 89],
+        ("Close", "TEST"): [100, 91],
+    }, index=dates)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    entry = {
+        "symbol": "TEST",
+        "side": "LONG",
+        "style": "SWING_20D",
+        "strategy": "trend_momentum",
+        "signal_date": "2026-01-05",
+        "entry": 100,
+        "stop": 95,
+        "target": 110,
+        "max_hold": 20,
+        "status": "PAPER_CANDIDATE",
+    }
+    path = tmp_path / "paper.json"
+
+    update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data.iloc[:1], path=path)
+    summary = update_paper_ledger({"created_at": "2026-01-06T22:00:00Z", "entries": [entry]}, data, path=path)
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+
+    assert summary["closed_trades"] == 1
+    assert ledger["closed"][0]["exit_reason"] == "gap_stop"
+    assert ledger["closed"][0]["return"] == -0.002
+
+
 def test_paper_ledger_does_not_overlap_persistent_signal(tmp_path):
     dates = pd.date_range("2026-01-05", periods=2, freq="B")
     data = pd.DataFrame({
