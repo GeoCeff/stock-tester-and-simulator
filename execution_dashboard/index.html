@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar">
+  <aside class="app-sidebar">
     <div class="brand-block">
       <div class="brand-mark" aria-hidden="true">SL</div>
       <div>
@@ -23,6 +23,20 @@
       <button class="section-link" type="button" data-section="analysis-hub" data-analysis-tab="performance">Portfolio</button>
       <button class="section-link" type="button" data-section="analysis-hub" data-analysis-tab="journal">Activity</button>
     </nav>
+    <div class="sidebar-status">
+      <span aria-hidden="true"></span>
+      <div>
+        <strong>Local workstation</strong>
+        <small>Safety gates active</small>
+      </div>
+    </div>
+  </aside>
+
+  <header class="topbar">
+    <div class="page-context">
+      <span class="eyebrow">Live workstation</span>
+      <h2>Trading overview</h2>
+    </div>
     <div class="top-metrics">
       <div class="metric">
         <span>Mode</span>
@@ -63,25 +77,27 @@
 
   <section id="system-banner" class="system-banner"></section>
 
-  <section id="decision-panel" class="decision-panel" aria-label="Bot recommendation">
-    <div class="decision-main">
-      <span id="decision-status">Bot recommendation</span>
-      <h2 id="decision-title">Loading trade plan</h2>
-      <p id="decision-trade">The scanner is ranking setups and checking risk gates.</p>
-    </div>
-    <div id="decision-numbers" class="decision-numbers"></div>
-    <div id="decision-actions" class="decision-actions"></div>
-  </section>
+  <div class="intelligence-grid">
+    <section id="decision-panel" class="decision-panel" aria-label="Bot recommendation">
+      <div class="decision-main">
+        <span id="decision-status">Bot recommendation</span>
+        <h2 id="decision-title">Loading trade plan</h2>
+        <p id="decision-trade">The scanner is ranking setups and checking risk gates.</p>
+      </div>
+      <div id="decision-numbers" class="decision-numbers"></div>
+      <div id="decision-actions" class="decision-actions"></div>
+    </section>
 
-  <section id="research-panel" class="research-panel" aria-label="AI market research">
-    <div class="research-main">
-      <span id="model-status">Model: heuristic fallback</span>
-      <h2 id="research-title">AI research</h2>
-      <p id="research-summary">Loading market research.</p>
-    </div>
-    <div id="research-numbers" class="research-numbers"></div>
-    <button id="refresh-research" type="button">Refresh Research</button>
-  </section>
+    <section id="research-panel" class="research-panel" aria-label="AI market research">
+      <div class="research-main">
+        <span id="model-status">Model: heuristic fallback</span>
+        <h2 id="research-title">AI research</h2>
+        <p id="research-summary">Loading market research.</p>
+      </div>
+      <div id="research-numbers" class="research-numbers"></div>
+      <button id="refresh-research" type="button">Refresh Research</button>
+    </section>
+  </div>
 
   <section class="command-strip" aria-label="Trading command summary">
     <article>
