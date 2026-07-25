@@ -618,10 +618,28 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
             winner["reason"] = "no candidate passed development validation: " + _accept(winner, gates)[1]
             selected[style] = winner
             continue
+        executable = []
+        for row in viable:
+            execution_plan = evaluate_execution_plan(
+                development_data,
+                universe,
+                {"style": style, "strategy": row["strategy"]},
+                folds=folds - 1,
+                warmup=warmup,
+                cost_bps_per_side=cost_bps_per_side,
+            )
+            if _accept_execution_plan(execution_plan, gates)[0]:
+                executable.append(row)
+        if not executable:
+            winner = viable[0]
+            winner["accepted"] = False
+            winner["reason"] = "no candidate passed development execution validation"
+            selected[style] = winner
+            continue
         winner = evaluate_candidate(
             data,
             universe,
-            {"style": style, "strategy": viable[0]["strategy"]},
+            {"style": style, "strategy": executable[0]["strategy"]},
             folds=folds,
             warmup=warmup,
             cost_bps_per_side=cost_bps_per_side,

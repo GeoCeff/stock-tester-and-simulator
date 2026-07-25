@@ -102,6 +102,61 @@ def test_research_loop_skips_high_score_candidate_that_fails_development_gates(m
     assert final_exposures == ["good"]
 
 
+def test_research_loop_skips_candidate_with_untradeable_development_bracket(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=360, freq="B")
+    data = pd.DataFrame({("Close", "TEST"): np.arange(360) + 100}, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    final_exposures = []
+
+    def fake_evaluate(frame, universe, candidate, **kwargs):
+        if len(frame) == len(data):
+            final_exposures.append(candidate["strategy"])
+        metric = {
+            "trades": 100,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5,
+            "max_drawdown": -0.1,
+            "total_return": 0.2,
+        }
+        return {
+            **candidate,
+            "development": {**metric, "positive_fold_ratio": 1.0},
+            "final": metric,
+            "folds": [metric],
+            "score": 10.0 if candidate["strategy"] == "untradeable" else 5.0,
+        }
+
+    def fake_execution(frame, universe, candidate, **kwargs):
+        passing = candidate["strategy"] == "tradeable"
+        metric = {
+            "trades": 100,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5 if passing else 1.0,
+            "positive_fold_ratio": 1.0,
+            "positive_symbol_ratio": 1.0,
+        }
+        return {"development": metric, "final": metric, "folds": [], "by_symbol": {}}
+
+    monkeypatch.setattr(research_agent, "evaluate_candidate", fake_evaluate)
+    monkeypatch.setattr(research_agent, "evaluate_execution_plan", fake_execution)
+    monkeypatch.setattr(research_agent, "_latest_candidates", lambda *args: [])
+    result = run_research_loop(
+        data,
+        ["TEST"],
+        candidates=[
+            {"style": "SWING_20D", "strategy": "untradeable"},
+            {"style": "SWING_20D", "strategy": "tradeable"},
+        ],
+        folds=4,
+        warmup=200,
+    )
+
+    assert result["styles"]["SWING_20D"]["strategy"] == "tradeable"
+    assert final_exposures == ["tradeable"]
+
+
 def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
     dates = pd.date_range("2026-01-05", periods=2, freq="B")
     data = pd.DataFrame({
