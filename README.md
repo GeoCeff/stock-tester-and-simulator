@@ -60,7 +60,7 @@ The agent:
 7. refreshes the existing news gate for current candidates without requiring the browser to be open;
 8. publishes a rejected result when nothing passes.
 
-Paper signals are filled at the next available market open and do not count as evidence until a later bar closes them by stop, target, or maximum hold. At least 30 closed trades in one style, positive cost-adjusted expectancy, profit factor of 1.2, and drawdown within 15% are required for the ledger to report that style as validated.
+Paper signals use the published limit entry for up to three future bars, allow only one open position per symbol/style, and do not count as evidence until a real later bar closes them by stop, target, or maximum hold. At least 30 closed trades in one style, positive cost-adjusted expectancy, profit factor of 1.2, and drawdown within 15% are required for the ledger to report that style as validated.
 
 The execution dashboard reloads the agent result and model pack whenever research refreshes. Only matching, fresh signals can pass its research-agent gate. News refreshes with every agent run and hourly while the dashboard is open; unavailable news reduces rather than approves a setup. News and every existing account, quote, model, learning, fee, and IBKR gate can still reduce or reject a setup.
 

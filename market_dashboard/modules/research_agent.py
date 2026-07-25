@@ -46,6 +46,7 @@ DEFAULT_AGENT_RESULT_PATH = (
 DEFAULT_PAPER_LEDGER_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_paper.json"
 )
+ENTRY_VALID_BARS = 3
 
 
 def _indicators(close):
@@ -222,6 +223,7 @@ def _latest_candidates(data, universe, selected):
                 "stop": entry - stop_distance,
                 "target": entry + stop_distance * config["target_r"],
                 "max_hold": config["holding_period"],
+                "entry_valid_bars": ENTRY_VALID_BARS,
                 "status": "PENDING_NEWS_AND_LIVE_GATES",
             })
     return rows
@@ -242,28 +244,56 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
         ledger = {"schema_version": 1, "positions": [], "closed": [], "cancelled": []}
     ledger.setdefault("cancelled", [])
 
+    current_candidates = {
+        (entry["symbol"], entry["style"]): entry
+        for entry in result["entries"]
+    }
     still_open = []
     for position in ledger["positions"]:
         frame = get_ticker_frame(data, position["symbol"])
-        future = frame.loc[frame.index > pd.Timestamp(position["signal_date"])].head(int(position["max_hold"]))
+        if not position.get("entry_date"):
+            candidate = current_candidates.get((position["symbol"], position["style"]), {})
+            position.setdefault("limit_entry", candidate.get("entry"))
+            position.setdefault("entry_valid_bars", candidate.get("entry_valid_bars", ENTRY_VALID_BARS))
+        future = frame.loc[frame.index > pd.Timestamp(position["signal_date"])]
         if future.empty:
             still_open.append(position)
             continue
         if not position.get("entry_date"):
-            position["entry_date"] = str(future.index[0].date())
-            position["entry"] = float(future.iloc[0]["Open"])
+            if not position["limit_entry"]:
+                ledger["cancelled"].append({**position, "reason": "legacy signal missing limit entry"})
+                continue
+            entry_window = future.head(int(position["entry_valid_bars"]))
+            fill = next(
+                (
+                    (date, bar)
+                    for date, bar in entry_window.iterrows()
+                    if np.isfinite(float(bar["Low"])) and float(bar["Low"]) <= position["limit_entry"]
+                ),
+                None,
+            )
+            if not fill:
+                if len(entry_window) >= position["entry_valid_bars"]:
+                    ledger["cancelled"].append({**position, "reason": "limit entry expired"})
+                else:
+                    still_open.append(position)
+                continue
+            fill_date, fill_bar = fill
+            position["entry_date"] = str(fill_date.date())
+            position["entry"] = min(float(fill_bar["Open"]), float(position["limit_entry"]))
             if not position["stop"] < position["entry"] < position["target"]:
                 ledger["cancelled"].append({**position, "reason": "opening gap invalidated bracket"})
                 continue
+        holding = frame.loc[frame.index >= pd.Timestamp(position["entry_date"])].head(int(position["max_hold"]))
         exit_price = None
         exit_reason = ""
         exit_date = None
-        for date, bar in future.loc[future.index >= pd.Timestamp(position["entry_date"])].iterrows():
+        for date, bar in holding.iterrows():
             if float(bar["Low"]) <= position["stop"]:
                 exit_price, exit_reason = position["stop"], "stop"
             elif float(bar["High"]) >= position["target"]:
                 exit_price, exit_reason = position["target"], "target"
-            elif date == future.index[-1] and len(future) >= position["max_hold"]:
+            elif date == holding.index[-1] and len(holding) >= position["max_hold"]:
                 exit_price, exit_reason = float(bar["Close"]), "time"
             if exit_reason:
                 exit_date = str(date.date())
@@ -294,8 +324,17 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
             for field in ("news_action", "news_status", "news", "news_reasons", "status"):
                 if field in entry:
                     matching[0][field] = entry[field]
-        elif key not in existing and entry.get("news_action") != "reject":
-            still_open.append({**entry, "entry": None, "entry_date": None})
+        elif (
+            key not in existing
+            and not any((row["symbol"], row["style"]) == key[:2] for row in still_open)
+            and entry.get("news_action") != "reject"
+        ):
+            still_open.append({
+                **entry,
+                "limit_entry": entry["entry"],
+                "entry": None,
+                "entry_date": None,
+            })
     rejected = [row for row in still_open if row.get("news_action") == "reject" and not row.get("entry_date")]
     ledger["cancelled"].extend({**row, "reason": "rejected by news gate"} for row in rejected)
     still_open = [row for row in still_open if row not in rejected]

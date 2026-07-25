@@ -113,9 +113,43 @@ def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
     ledger = json.loads(path.read_text(encoding="utf-8"))
 
     assert summary["closed_trades"] == 1
-    assert ledger["closed"][0]["entry"] == 101
+    assert ledger["closed"][0]["entry"] == 100
     assert ledger["closed"][0]["exit_reason"] == "stop"
     assert ledger["closed"][0]["return"] < 0
+
+
+def test_paper_ledger_does_not_overlap_persistent_signal(tmp_path):
+    dates = pd.date_range("2026-01-05", periods=2, freq="B")
+    data = pd.DataFrame({
+        ("Open", "TEST"): [100, 102],
+        ("High", "TEST"): [101, 103],
+        ("Low", "TEST"): [99, 101],
+        ("Close", "TEST"): [100, 102],
+    }, index=dates)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    entry = {
+        "symbol": "TEST",
+        "side": "LONG",
+        "style": "SWING_20D",
+        "strategy": "trend_momentum",
+        "signal_date": "2026-01-05",
+        "entry": 100,
+        "stop": 90,
+        "target": 120,
+        "max_hold": 20,
+        "status": "PAPER_CANDIDATE",
+    }
+    path = tmp_path / "paper.json"
+    update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data.iloc[:1], path=path)
+    update_paper_ledger(
+        {"created_at": "2026-01-06T22:00:00Z", "entries": [{**entry, "signal_date": "2026-01-06"}]},
+        data,
+        path=path,
+    )
+
+    positions = json.loads(path.read_text(encoding="utf-8"))["positions"]
+    assert len(positions) == 1
+    assert positions[0]["signal_date"] == "2026-01-05"
 
 
 def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
