@@ -45,3 +45,26 @@ Reference: [Momentum Strategies](https://www.nber.org/papers/w5375) supports cro
 Decision: discard the implementation and do not tune the proximity threshold against these results.
 
 Reference: [The 52-Week High and Momentum Investing](https://onlinelibrary.wiley.com/doi/10.1111/j.1540-6261.2004.00695.x) supports cross-sectional ranking by nearness to the high; it does not validate this simpler fixed-threshold adaptation.
+
+## 2026-07-25 — Intermediate-horizon momentum
+
+- Hypothesis: require a positive return from 12 to 6 months ago and a current close above the 200-day moving average, then hold for 20 trading days.
+- Development-only result: 829 trades, 0.7820% expectancy, 0.770 worst-fold profit factor, -11.00% drawdown, and 67% positive folds.
+- Internal validation improved to 1.6797% expectancy and a 2.016 profit factor, but the earlier development folds were not repeatable.
+- Failed before bracket replay and outer holdout on both profit-factor and fold-consistency gates.
+
+Decision: discard the implementation and treat the strong late period as regime-specific evidence, not validation.
+
+Reference: [Is Momentum Really Momentum?](https://doi.org/10.1016/j.jfineco.2011.05.003) studies cross-sectional intermediate-horizon performance; it does not validate this long-only time-series adaptation.
+
+## 2026-07-25 — Positive earnings-surprise drift
+
+- Hypothesis: after any positive reported-versus-estimated EPS surprise, wait through the announcement reaction day and hold for 20 trading days.
+- Source check: Yahoo exposed 716 usable positive-surprise events across all 20 symbols in the development period.
+- Development-only result: 285 trades, 1.0523% expectancy, 0.900 worst-fold profit factor, -10.01% drawdown, and 67% positive folds.
+- Internal validation improved sharply to 3.3518% expectancy and a 4.091 profit factor, but the earlier folds did not support a repeatable edge.
+- Failed before bracket replay and outer holdout on profit-factor and fold-consistency gates.
+
+Decision: discard the naive positive-surprise rule, do not select a surprise threshold from these results, and remove the exploratory parser dependency because no production path uses it.
+
+Reference: [Post-Earnings-Announcement Drift](https://doi.org/10.2307/2491062) documents delayed response to earnings surprises; it does not validate this unranked long-only implementation.
