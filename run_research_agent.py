@@ -33,9 +33,17 @@ def refresh_news():
 
 def apply_news_snapshot(result):
     try:
-        symbols = json.loads(NEWS_SNAPSHOT_PATH.read_text(encoding="utf-8"))["symbols"]
+        snapshot = json.loads(NEWS_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        symbols = snapshot["symbols"]
+        news_version = ":".join(filter(None, [
+            snapshot.get("research_version", "news-unversioned"),
+            snapshot.get("ai_status", "ai-unavailable"),
+            snapshot.get("ai_model", ""),
+        ]))
     except (OSError, KeyError, TypeError, json.JSONDecodeError):
         symbols = {}
+        news_version = "news-unavailable"
+    result["news_version"] = news_version
     for entry in result["entries"]:
         news = symbols.get(entry["symbol"], {})
         action = news.get("action", "news_unavailable")
@@ -44,6 +52,7 @@ def apply_news_snapshot(result):
             "news_status": news.get("news_status", "news_unavailable"),
             "news": news.get("news", []),
             "news_reasons": news.get("reasons", ["news unavailable"]),
+            "news_version": news_version,
             "status": {
                 "pass": "PAPER_CANDIDATE",
                 "reduce": "PAPER_CANDIDATE_REDUCED",

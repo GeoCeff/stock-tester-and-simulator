@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -377,12 +379,16 @@ def _latest_candidates(data, universe, selected):
 def _paper_plan_id(row, cost_bps_per_side):
     config = STYLE_CONFIG[row["style"]]
     holding_period = row.get("max_hold", row.get("holding_period", config["holding_period"]))
+    strategy_fingerprint = hashlib.sha256(
+        inspect.getsource(STRATEGIES[row["strategy"]]).encode("utf-8")
+    ).hexdigest()[:12]
     return (
-        f"{row['style']}:{row['strategy']}:hold={holding_period}:"
+        f"{row['style']}:{row['strategy']}@{strategy_fingerprint}:hold={holding_period}:"
         f"stop={row.get('stop_atr', config['stop_atr']):g}atr:"
         f"target={row.get('target_r', config['target_r']):g}r:"
         f"entry={row.get('entry_valid_bars', ENTRY_VALID_BARS)}:"
-        f"cost={cost_bps_per_side:g}bps"
+        f"cost={cost_bps_per_side:g}bps:"
+        f"news={row.get('news_version', 'news-unversioned')}"
     )
 
 
@@ -511,7 +517,11 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
     current_plan_ids = {entry["plan_id"] for entry in result["entries"]}
     for style, row in result.get("styles", {}).items():
         if style in STYLE_CONFIG and row.get("acceptance", {}).get("status") == "pass":
-            current_plan_ids.add(_paper_plan_id({"style": style, **row}, cost_bps_per_side))
+            current_plan_ids.add(_paper_plan_id({
+                "style": style,
+                **row,
+                "news_version": result.get("news_version", "news-unversioned"),
+            }, cost_bps_per_side))
 
     by_plan = {}
     plan_ids = {row.get("plan_id", "legacy-unversioned") for row in ledger["closed"]}

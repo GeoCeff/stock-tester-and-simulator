@@ -204,7 +204,7 @@ def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):
 
 def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
     path = tmp_path / "news.json"
-    path.write_text(json.dumps({"symbols": {"TEST": {
+    path.write_text(json.dumps({"research_version": "test-news-v1", "ai_status": "openai_unavailable", "symbols": {"TEST": {
         "action": "reduce",
         "news_status": "ok",
         "news": [{"title": "Negative headline"}],
@@ -217,6 +217,7 @@ def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
 
     assert result["entries"][0]["status"] == "PAPER_CANDIDATE_REDUCED"
     assert result["entries"][0]["news_action"] == "reduce"
+    assert result["entries"][0]["news_version"] == "test-news-v1:openai_unavailable"
 
 
 def test_old_plan_trades_cannot_validate_current_plan(tmp_path):

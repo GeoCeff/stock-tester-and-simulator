@@ -361,7 +361,7 @@ function agentNewsSnapshot(agent) {
   return {
     schema_version: 1,
     created_at: new Date().toISOString(),
-    research_version: "agent-news-v1",
+    research_version: "agent-news-v2",
     symbols
   };
 }
