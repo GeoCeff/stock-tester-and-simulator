@@ -283,6 +283,7 @@ def test_research_history_is_deduplicated_and_bounded(tmp_path):
 
     assert [row["created_at"] for row in records] == ["2026-07-26T00:00:00Z", "2026-07-27T00:00:00Z"]
     assert records[-1]["styles"]["SWING_20D"]["holdout_exposed"] is True
+    assert records[-1]["styles"]["SWING_20D"]["family"] == "trend"
 
 
 def test_recent_rejected_holdout_trials_ignores_passes_and_expired_trials(tmp_path):
@@ -344,6 +345,10 @@ def test_recent_rejected_holdout_trials_blocks_the_strategy_family(tmp_path):
     assert ("SWING_20D", "trend_momentum") in trials
     assert ("SWING_20D", "benchmark_confirmed_trend") in trials
     assert ("SWING_20D", "rsi_mean_reversion") not in trials
+
+
+def test_every_production_strategy_declares_a_family():
+    assert set(research_agent.STRATEGIES) == set(research_agent.STRATEGY_FAMILIES)
 
 
 def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):

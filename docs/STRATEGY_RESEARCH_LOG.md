@@ -154,3 +154,32 @@ Reference: [Short-Term Return Reversal: The Long and the Short of It](https://do
 Decision: discard the implementation; the broad historical calendar effect did not survive this executable stock-level adaptation.
 
 Reference: [Are Seasonal Anomalies Real? A Ninety-Year Perspective](https://doi.org/10.1093/rfs/1.4.403) documents turn-of-month seasonality; it does not validate this five-day individual-stock implementation.
+
+## 2026-07-25 — Intraday weekly reversal
+
+- Hypothesis: isolate open-to-close price pressure by requiring a five-day cumulative intraday loss of at least 1.96 recent intraday-volatility units, then wait one day and hold for five trading days.
+- Development-only result: 269 trades, 0.1420% expectancy, 0.879 worst-fold profit factor, -2.95% drawdown, and 67% positive folds.
+- Internal validation produced 105 trades, 0.0579% expectancy, and a 1.070 profit factor.
+- Failed before bracket replay and outer holdout on expectancy, profit-factor, and fold-consistency gates.
+
+Decision: discard the implementation; separating intraday from overnight returns did not create a stable executable reversal edge in this liquid large-cap universe.
+
+Reference: [Short-Term Return Reversals and Intraday Transactions](https://doi.org/10.1142/S2010139219500022) attributes weekly reversal primarily to intraday returns; it does not validate this volatility-threshold adaptation.
+
+## 2026-07-25 — Negative overnight-gap reversal
+
+- Hypothesis: after an overnight open below the prior close by at least 1.96 of the stock's trailing 63-day overnight volatility, enter only after the gap day closes and hold for five trading days.
+- Development-only result: 637 trades, 0.4296% expectancy, 0.614 worst-fold profit factor, -6.55% drawdown, and 67% positive folds.
+- Internal validation produced 167 trades, 0.1361% expectancy, and a 1.188 profit factor.
+- Failed before bracket replay and outer holdout on profit-factor and fold-consistency gates.
+
+Decision: discard the implementation; any gap-day reversal was too inconsistent after an executable close-to-next-day delay.
+
+Reference: [Dark Side of the Day: Overnight Price Jumps and Short-Term Return Predictability](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4335622) studies transient reversal after overnight jumps; it does not validate this long-only delayed-entry rule.
+
+## 2026-07-25 — Immutable family evidence
+
+- Process improvement: every production strategy must now declare a strategy family.
+- Research-history records persist the family used at trial time, so later mapping changes cannot silently reinterpret prior holdout evidence.
+
+Decision: future candidate integrations are incomplete unless their family classification is explicit and tested.

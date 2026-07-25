@@ -886,7 +886,7 @@ def recent_rejected_holdout_trials(*, path=None, now=None, cooldown_days=HOLDOUT
         for style, row in record.get("styles", {}).items():
             if row.get("holdout_exposed") and row.get("status") == "reject":
                 strategy = row.get("strategy", "")
-                family = STRATEGY_FAMILIES.get(strategy, strategy)
+                family = row.get("family") or STRATEGY_FAMILIES.get(strategy, strategy)
                 family_members = [
                     name for name in STRATEGIES
                     if STRATEGY_FAMILIES.get(name, name) == family
@@ -912,6 +912,7 @@ def append_research_history(result, *, path=None, max_records=200):
         "styles": {
             style: {
                 "strategy": row.get("strategy", ""),
+                "family": STRATEGY_FAMILIES.get(row.get("strategy", ""), row.get("strategy", "")),
                 "status": row.get("acceptance", {}).get("status", "reject"),
                 "reason": row.get("acceptance", {}).get("reason", "not evaluated"),
                 "holdout_exposed": row.get("metrics", {}).get("holdout_exposed", False),
