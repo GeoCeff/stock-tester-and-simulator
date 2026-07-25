@@ -176,6 +176,119 @@ def _accept(evaluation, gates):
     return not failures, "; ".join(failures) or "development and untouched final holdout passed"
 
 
+def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, cost_bps_per_side=10):
+    """Replay the published limit, stop, target, and maximum hold rules."""
+    config = STYLE_CONFIG[candidate["style"]]
+    strategy_name = candidate["strategy"]
+    prepared = {}
+    for symbol in universe:
+        frame = get_ticker_frame(data, symbol).dropna(subset=["Open", "High", "Low", "Close"])
+        if len(frame) >= warmup + folds * 10:
+            prepared[symbol] = frame
+    if not prepared:
+        raise ValueError("no symbol has enough OHLC data")
+    usable_length = min(map(len, prepared.values()))
+    fold_metrics = []
+    for start, end in _folds(usable_length, folds, warmup):
+        trade_returns = []
+        for frame in prepared.values():
+            frame = frame.iloc[-usable_length:]
+            close = pd.to_numeric(frame["Close"], errors="coerce")
+            signals = STRATEGIES[strategy_name](
+                holding_period=config["holding_period"],
+                position_type="fixed",
+                fee_pct=0,
+            ).generate_signals(close, _indicators(close))
+            previous = close.shift(1)
+            atr = pd.concat([
+                frame["High"] - frame["Low"],
+                (frame["High"] - previous).abs(),
+                (frame["Low"] - previous).abs(),
+            ], axis=1).max(axis=1).rolling(14).mean()
+            index = start
+            while index < end:
+                if signals.iloc[index] <= 0 or not np.isfinite(atr.iloc[index]):
+                    index += 1
+                    continue
+                limit_entry = float(close.iloc[index])
+                stop_distance = max(float(atr.iloc[index]) * config["stop_atr"], limit_entry * 0.004)
+                stop = limit_entry - stop_distance
+                target = limit_entry + stop_distance * config["target_r"]
+                fill_index = next(
+                    (
+                        row
+                        for row in range(index + 1, min(index + 1 + ENTRY_VALID_BARS, end))
+                        if float(frame["Low"].iloc[row]) <= limit_entry
+                    ),
+                    None,
+                )
+                if fill_index is None:
+                    index += 1
+                    continue
+                entry = min(float(frame["Open"].iloc[fill_index]), limit_entry)
+                if not stop < entry < target:
+                    index += 1
+                    continue
+                exit_index = min(fill_index + config["holding_period"], end) - 1
+                exit_price = None
+                for row in range(fill_index, exit_index + 1):
+                    if float(frame["Low"].iloc[row]) <= stop:
+                        exit_index, exit_price = row, stop
+                        break
+                    if float(frame["High"].iloc[row]) >= target:
+                        exit_index, exit_price = row, target
+                        break
+                if exit_price is None and fill_index + config["holding_period"] <= end:
+                    exit_price = float(close.iloc[exit_index])
+                if exit_price is None:
+                    break
+                trade_returns.append(exit_price / entry - 1 - 2 * cost_bps_per_side / 10_000)
+                index = exit_index + 1
+        trades = np.asarray(trade_returns, dtype=float)
+        wins = trades[trades > 0]
+        losses = trades[trades < 0]
+        fold_metrics.append({
+            "trades": int(trades.size),
+            "win_rate": float((trades > 0).mean()) if trades.size else 0.0,
+            "expectancy": float(trades.mean()) if trades.size else 0.0,
+            "profit_factor": float(wins.sum() / abs(losses.sum())) if losses.size else (999.0 if wins.size else 0.0),
+        })
+    development_folds = fold_metrics[:-1]
+    development_trades = sum(row["trades"] for row in development_folds)
+    return {
+        "development": {
+            "trades": development_trades,
+            "win_rate": float(np.average(
+                [row["win_rate"] for row in development_folds],
+                weights=[max(row["trades"], 1) for row in development_folds],
+            )),
+            "expectancy": float(np.average(
+                [row["expectancy"] for row in development_folds],
+                weights=[max(row["trades"], 1) for row in development_folds],
+            )),
+            "profit_factor": min(row["profit_factor"] for row in development_folds),
+            "positive_fold_ratio": float(np.mean([row["expectancy"] > 0 for row in development_folds])),
+        },
+        "final": fold_metrics[-1],
+        "folds": fold_metrics,
+    }
+
+
+def _accept_execution_plan(evaluation, gates):
+    development = evaluation["development"]
+    final = evaluation["final"]
+    failures = []
+    if development["trades"] < gates["min_development_trades"] or final["trades"] < gates["min_final_trades"]:
+        failures.append("execution plan had too few trades")
+    if development["expectancy"] < gates["min_expectancy"] or final["expectancy"] < gates["min_expectancy"]:
+        failures.append("execution-plan expectancy failed")
+    if development["profit_factor"] < gates["min_profit_factor"] or final["profit_factor"] < gates["min_profit_factor"]:
+        failures.append("execution-plan profit factor failed")
+    if development["positive_fold_ratio"] < gates["min_positive_fold_ratio"]:
+        failures.append("execution-plan fold consistency failed")
+    return not failures, "; ".join(failures) or "published entry and bracket plan passed"
+
+
 def _common_length(data, universe):
     lengths = [len(pd.to_numeric(get_ticker_frame(data, symbol).get("Close"), errors="coerce").dropna()) for symbol in universe]
     return min(lengths) if lengths else 0
@@ -423,7 +536,18 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
             warmup=warmup,
             cost_bps_per_side=cost_bps_per_side,
         )
-        winner["accepted"], winner["reason"] = _accept(winner, gates)
+        signal_accepted, signal_reason = _accept(winner, gates)
+        winner["execution_plan"] = evaluate_execution_plan(
+            data,
+            universe,
+            {"style": style, "strategy": winner["strategy"]},
+            folds=folds,
+            warmup=warmup,
+            cost_bps_per_side=cost_bps_per_side,
+        )
+        execution_accepted, execution_reason = _accept_execution_plan(winner["execution_plan"], gates)
+        winner["accepted"] = signal_accepted and execution_accepted
+        winner["reason"] = signal_reason if not signal_accepted else execution_reason
         selected[style] = winner
 
     styles = {
@@ -439,7 +563,11 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
             **config,
             "enabled": accepted,
             "strategy": winner["strategy"] if winner else "",
-            "metrics": {"development": winner["development"], "final_holdout": winner["final"]} if winner else {},
+            "metrics": {
+                "development": winner["development"],
+                "final_holdout": winner["final"],
+                "execution_plan": winner.get("execution_plan", {}),
+            } if winner else {},
             "acceptance": {"status": "pass" if accepted else "reject", "reason": winner["reason"] if winner else "not evaluated"},
         }
     return {

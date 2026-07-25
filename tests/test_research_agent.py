@@ -30,6 +30,7 @@ def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
     )
 
     assert result["styles"]["SWING_5D"]["acceptance"]["status"] == "pass"
+    assert result["styles"]["SWING_5D"]["metrics"]["execution_plan"]["final"]["trades"] >= 2
     assert result["entries"][0]["entry"] > result["entries"][0]["stop"]
     assert result["entries"][0]["target"] > result["entries"][0]["entry"]
 
@@ -66,6 +67,22 @@ def test_research_loop_skips_high_score_candidate_that_fails_development_gates(m
         return {**candidate, "development": development, "final": metric, "folds": [metric], "score": 5.0 if passing else 10.0}
 
     monkeypatch.setattr(research_agent, "evaluate_candidate", fake_evaluate)
+    monkeypatch.setattr(research_agent, "evaluate_execution_plan", lambda *args, **kwargs: {
+        "development": {
+            "trades": 100,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5,
+            "positive_fold_ratio": 1.0,
+        },
+        "final": {
+            "trades": 30,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5,
+        },
+        "folds": [],
+    })
     monkeypatch.setattr(research_agent, "_latest_candidates", lambda *args: [])
     result = run_research_loop(
         data,
