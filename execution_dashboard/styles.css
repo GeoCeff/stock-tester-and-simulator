@@ -1355,11 +1355,11 @@ html {
 
 body {
   min-width: 0;
-  padding-left: 214px;
+  padding-left: 224px;
   background:
-    radial-gradient(circle at 18% 0%, rgba(91, 214, 231, .09), transparent 30rem),
-    radial-gradient(circle at 88% 12%, rgba(66, 211, 146, .07), transparent 34rem),
-    #070b12;
+    radial-gradient(circle at 14% -8%, rgba(55, 133, 165, .13), transparent 34rem),
+    radial-gradient(circle at 88% 8%, rgba(39, 126, 98, .08), transparent 32rem),
+    #070a10;
 }
 
 button,
@@ -1387,14 +1387,14 @@ button:active:not(:disabled) {
   inset: 0 auto 0 0;
   z-index: 30;
   display: flex;
-  width: 214px;
+  width: 224px;
   flex-direction: column;
   padding: 20px 14px 16px;
   border-right: 1px solid rgba(105, 167, 255, .13);
   background:
-    linear-gradient(180deg, rgba(13, 21, 34, .98), rgba(7, 12, 20, .99)),
-    #090f18;
-  box-shadow: 16px 0 44px rgba(0, 0, 0, .18);
+    linear-gradient(180deg, rgba(12, 20, 31, .99), rgba(6, 10, 17, .99)),
+    #080d15;
+  box-shadow: 18px 0 48px rgba(0, 0, 0, .22);
 }
 
 .topbar {
@@ -1403,12 +1403,12 @@ button:active:not(:disabled) {
   z-index: 20;
   display: flex;
   justify-content: space-between;
-  gap: 20px;
+  gap: 14px;
   width: 100%;
   height: auto;
-  min-height: 72px;
-  padding: 10px 14px;
-  background: rgba(7, 11, 18, .92);
+  min-height: 76px;
+  padding: 10px 16px;
+  background: rgba(7, 11, 18, .94);
   backdrop-filter: blur(18px);
 }
 
@@ -1439,7 +1439,7 @@ button:active:not(:disabled) {
   place-items: center;
   border: 1px solid rgba(91, 214, 231, .4);
   border-radius: 13px;
-  background: linear-gradient(145deg, rgba(91, 214, 231, .2), rgba(66, 211, 146, .08));
+  background: linear-gradient(145deg, rgba(91, 214, 231, .18), rgba(66, 211, 146, .06));
   color: #b9f5ff;
   font-size: 13px;
   font-weight: 900;
@@ -1529,24 +1529,26 @@ button:active:not(:disabled) {
 }
 
 .top-metrics {
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  gap: 7px;
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(116px, 1.2fr) repeat(5, minmax(82px, 1fr)) auto;
+  gap: 8px;
 }
 
 .top-actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
-  padding: 4px;
+  gap: 3px;
+  padding: 3px;
   border: 1px solid rgba(105, 167, 255, .11);
   border-radius: 12px;
   background: rgba(10, 17, 28, .76);
 }
 
 .top-actions button {
-  height: 36px;
+  height: 38px;
+  padding-inline: 10px;
   border-color: transparent;
   background: transparent;
 }
@@ -1568,15 +1570,24 @@ button:active:not(:disabled) {
 }
 
 .metric {
-  min-width: 82px;
+  min-width: 0;
+  align-content: center;
+  padding: 7px 10px;
   border-radius: 10px;
   background: rgba(15, 23, 36, .78);
 }
 
+.metric strong,
+.metric span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .system-banner {
-  margin: 8px 14px 0;
-  padding: 7px 10px;
-  font-size: 11px;
+  margin: 10px 16px 0;
+  padding: 9px 12px;
+  font-size: 12px;
 }
 
 .panel,
@@ -1589,9 +1600,9 @@ button:active:not(:disabled) {
 
 .intelligence-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+  grid-template-columns: minmax(360px, .9fr) minmax(520px, 1.1fr);
   gap: 12px;
-  margin: 14px;
+  margin: 12px 16px;
 }
 
 .decision-panel,
@@ -1599,6 +1610,7 @@ button:active:not(:disabled) {
   grid-template-columns: 1fr;
   margin: 0;
   min-height: 0;
+  padding: 14px;
 }
 
 .decision-panel {
@@ -1606,7 +1618,7 @@ button:active:not(:disabled) {
 }
 
 .research-panel {
-  grid-template-columns: minmax(220px, .8fr) minmax(390px, 1.2fr);
+  grid-template-columns: minmax(220px, .78fr) minmax(360px, 1.22fr);
 }
 
 .research-panel > button {
@@ -1631,7 +1643,23 @@ button:active:not(:disabled) {
   min-height: 38px;
   border-top: 1px solid rgba(105, 167, 255, .12);
   border-left: 0;
-  padding: 9px 0 0;
+  margin-top: 10px;
+  padding: 10px 0 0;
+}
+
+.decision-panel:has(.decision-numbers:empty) {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, .34fr);
+  align-items: center;
+}
+
+.decision-panel:has(.decision-numbers:empty) .decision-actions {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: stretch;
+  margin-top: 0;
+  border-top: 0;
+  border-left: 1px solid rgba(105, 167, 255, .12);
+  padding: 0 0 0 14px;
 }
 
 .research-panel > button {
@@ -1640,20 +1668,20 @@ button:active:not(:disabled) {
 }
 
 .research-numbers {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .workflow-strip {
-  padding: 0 14px 12px;
+  padding: 0 16px 12px;
 }
 
 .workspace {
-  grid-template-columns: 300px minmax(580px, 1fr) 370px;
+  grid-template-columns: 288px minmax(560px, 1fr) 354px;
   gap: 12px;
   width: 100%;
-  height: max(680px, calc(100vh - 300px));
-  min-height: 640px;
-  padding: 0 14px 14px;
+  height: max(700px, calc(100vh - 306px));
+  min-height: 660px;
+  padding: 0 16px 16px;
 }
 
 .panel-header {
@@ -1697,7 +1725,7 @@ button:active:not(:disabled) {
 
 .bottom-blotter {
   height: 520px;
-  margin: 0 14px 20px;
+  margin: 0 16px 22px;
   overflow: hidden;
 }
 
@@ -1781,37 +1809,35 @@ button:active:not(:disabled) {
 }
 
 @media (max-width: 1680px) {
+  .page-context {
+    display: none;
+  }
+
   .top-metrics {
-    overflow-x: auto;
-    justify-content: flex-end;
-    padding-bottom: 3px;
+    grid-template-columns: minmax(112px, 1.2fr) repeat(5, minmax(80px, 1fr)) auto;
   }
 }
 
 @media (max-width: 1500px) {
   body {
-    padding-left: 184px;
+    padding-left: 196px;
   }
 
   .app-sidebar {
-    width: 184px;
-  }
-
-  .page-context {
-    display: none;
+    width: 196px;
   }
 
   .workspace,
   .simple-mode .workspace {
-    grid-template-columns: 260px minmax(500px, 1fr);
+    grid-template-columns: 272px minmax(500px, 1fr);
     height: auto;
     min-height: 0;
   }
 
   .right-rail {
     grid-column: 1 / -1;
-    grid-template-columns: minmax(340px, 1.2fr) minmax(260px, .8fr) minmax(300px, 1fr);
-    grid-template-rows: 560px;
+    grid-template-columns: minmax(360px, 1.15fr) minmax(260px, .8fr) minmax(320px, 1fr);
+    grid-template-rows: 540px;
   }
 
   .simple-mode .right-rail {
@@ -1822,7 +1848,15 @@ button:active:not(:disabled) {
 
 }
 
-@media (max-width: 1120px) {
+@media (max-width: 1240px) {
+  .topbar {
+    overflow-x: auto;
+  }
+
+  .top-metrics {
+    min-width: 980px;
+  }
+
   .intelligence-grid {
     grid-template-columns: 1fr;
   }
@@ -1844,7 +1878,7 @@ button:active:not(:disabled) {
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 980px) {
   body {
     padding-left: 0;
   }
@@ -1852,23 +1886,30 @@ button:active:not(:disabled) {
   .app-sidebar {
     position: relative;
     inset: auto;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
     width: auto;
-    padding: 12px 14px 0;
+    min-height: 76px;
+    padding: 10px 14px;
     border-right: 0;
     border-bottom: 1px solid rgba(105, 167, 255, .13);
   }
 
   .brand-block {
-    padding: 0 0 10px;
+    min-width: 248px;
+    padding: 0;
+    border-bottom: 0;
   }
 
   .app-nav {
     flex-direction: row;
     align-items: center;
+    justify-content: flex-end;
     gap: 4px;
     overflow-x: auto;
     margin: 0;
-    padding: 2px 0 10px;
+    padding: 0;
   }
 
   .app-nav button {
@@ -1891,11 +1932,17 @@ button:active:not(:disabled) {
 
   .topbar {
     position: relative;
-    display: block;
+    display: flex;
+    align-items: center;
     gap: 10px;
+    min-height: 78px;
+    padding-block: 8px;
   }
 
   .top-metrics {
+    display: flex;
+    flex-wrap: nowrap;
+    min-width: 0;
     justify-content: flex-start;
     overflow-x: auto;
     padding-bottom: 4px;
@@ -1915,20 +1962,34 @@ button:active:not(:disabled) {
   }
 
   .decision-panel,
-  .research-panel,
-  .simple-mode .decision-panel,
-  .simple-mode .research-panel {
+  .simple-mode .decision-panel {
     grid-template-columns: 1fr;
   }
 
-  .decision-numbers,
-  .research-numbers {
+  .decision-panel:has(.decision-numbers:empty),
+  .simple-mode .decision-panel:has(.decision-numbers:empty) {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, .34fr);
+  }
+
+  .research-panel,
+  .simple-mode .research-panel {
+    grid-template-columns: minmax(260px, .8fr) minmax(400px, 1.2fr);
+  }
+
+  .decision-numbers {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .decision-actions,
-  .research-panel > button {
+  .research-numbers {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .decision-actions {
     grid-column: auto;
+  }
+
+  .research-panel > button {
+    grid-column: 2;
   }
 
   .workflow-strip {
@@ -1961,6 +2022,10 @@ button:active:not(:disabled) {
     min-height: 320px;
   }
 
+  .left-rail > .panel:last-child {
+    height: 640px;
+  }
+
   .chart-panel {
     min-height: 480px;
   }
@@ -1971,6 +2036,15 @@ button:active:not(:disabled) {
 
   .right-rail > .panel {
     min-height: 360px;
+  }
+
+  .right-rail > .panel:nth-child(2) {
+    height: 560px;
+  }
+
+  .right-rail > .panel:nth-child(2) .risk-grid {
+    height: calc(100% - 48px);
+    overflow: auto;
   }
 
   .analysis-heading {
@@ -1996,6 +2070,19 @@ button:active:not(:disabled) {
 }
 
 @media (max-width: 520px) {
+  .app-sidebar {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-block {
+    min-width: 0;
+  }
+
+  .app-nav {
+    justify-content: flex-start;
+    margin-top: 8px;
+  }
+
   .brand-block p,
   .top-metrics .metric:nth-of-type(n+4),
   #auto-scout {
@@ -2022,6 +2109,28 @@ button:active:not(:disabled) {
     font-size: 20px;
   }
 
+  .decision-panel:has(.decision-numbers:empty),
+  .simple-mode .decision-panel:has(.decision-numbers:empty) {
+    grid-template-columns: 1fr;
+  }
+
+  .decision-panel:has(.decision-numbers:empty) .decision-actions {
+    grid-column: auto;
+    grid-row: auto;
+    border-top: 1px solid rgba(105, 167, 255, .12);
+    border-left: 0;
+    padding: 10px 0 0;
+  }
+
+  .research-panel,
+  .simple-mode .research-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .research-panel > button {
+    grid-column: auto;
+  }
+
   .ticket-actions {
     grid-template-columns: 1fr 1fr;
   }
@@ -2038,5 +2147,15 @@ button:active:not(:disabled) {
   .bottom-blotter {
     height: 660px;
     margin-inline: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  button {
+    transition: none;
   }
 }
