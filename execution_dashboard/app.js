@@ -1275,6 +1275,11 @@
 
   function render() {
     resetAutoTradeCountIfNeeded();
+    const activeSetup = selectedSetup();
+    if (activeSetup) {
+      state.selectedSymbol = activeSetup.symbol;
+      state.selectedSetupId = activeSetup.id;
+    }
     document.body.classList.toggle("simple-mode", state.viewMode !== "DETAILED");
     if (state.mode === "FULL_AUTO" && !state.fullAutoEnabled) state.mode = "ALERT_ONLY";
     const fullAutoOption = document.querySelector('#bot-mode option[value="FULL_AUTO"]');

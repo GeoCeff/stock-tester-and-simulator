@@ -1601,6 +1601,22 @@ button:active:not(:disabled) {
   min-height: 0;
 }
 
+.decision-panel {
+  align-content: space-between;
+}
+
+.research-panel {
+  grid-template-columns: minmax(220px, .8fr) minmax(390px, 1.2fr);
+}
+
+.research-panel > button {
+  grid-column: 2;
+}
+
+.research-main span {
+  overflow-wrap: anywhere;
+}
+
 .simple-mode .intelligence-grid .decision-panel,
 .simple-mode .intelligence-grid .research-panel {
   grid-template-columns: 1fr;
