@@ -215,3 +215,14 @@ Reference: [SEC EDGAR APIs](https://www.sec.gov/search-filings/edgar-application
 Decision: retain the result as a promising disabled research candidate, but do not round the profit factor, lower the gate, or try nearby beta windows after seeing this miss. Re-evaluate only after materially new data accumulates or within a separately registered experiment.
 
 Reference: [Betting Against Beta](https://www.nber.org/papers/w16601) supports beta-sorted defensive equity portfolios; it does not validate this long-only monthly implementation.
+
+## 2026-07-26 — Fixed sector-pair mean reversion
+
+- Hypothesis: monitor five predeclared economic pairs—XOM/CVX, JPM/BAC, WMT/COST, LLY/PFE, and GOOGL/META—using a 60-session log-price-ratio z-score. On a fresh crossing beyond two standard deviations, enter the underperforming leg after the signal close and hold for five sessions. The test was long-only and did not claim the source paper's self-financing hedge.
+- Development-only result: 205 trades, -0.1831% expectancy, 0.604 worst-fold profit factor, -4.04% drawdown, and only 33% positive folds.
+- Internal validation improved to 71 trades, 0.2568% expectancy, a 1.488 profit factor, and -0.93% drawdown, but the earlier folds contradicted a repeatable edge.
+- Failed before bracket replay and outer holdout on expectancy, profit-factor, and fold-consistency gates. The final holdout beginning 2025-02-13 was not exposed.
+
+Decision: discard the implementation. Do not replace individual pairs, change the spread window, or lower the entry threshold after observing the recent-regime improvement.
+
+Reference: [Pairs Trading: Performance of a Relative Value Arbitrage Rule](https://www.nber.org/papers/w7032) supports the relative-value research family; it does not validate this long-only fixed-pair adaptation.
