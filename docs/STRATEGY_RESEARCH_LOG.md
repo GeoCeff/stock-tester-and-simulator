@@ -68,3 +68,15 @@ Reference: [Is Momentum Really Momentum?](https://doi.org/10.1016/j.jfineco.2011
 Decision: discard the naive positive-surprise rule, do not select a surprise threshold from these results, and remove the exploratory parser dependency because no production path uses it.
 
 Reference: [Post-Earnings-Announcement Drift](https://doi.org/10.2307/2491062) documents delayed response to earnings surprises; it does not validate this unranked long-only implementation.
+
+## 2026-07-25 — Consecutive earnings surprises
+
+- Hypothesis: require two consecutive positive reported-versus-estimated EPS surprises, wait through the latest announcement reaction day, and hold for 20 trading days.
+- Source check: 573 qualifying events were available across 19 symbols; Yahoo failed to return LLY earnings history on this refresh.
+- Development-only result: 233 trades, 0.7590% expectancy, 0.575 worst-fold profit factor, -8.50% drawdown, and 67% positive folds.
+- Internal validation improved to 3.2095% expectancy and a 4.007 profit factor, repeating the prior regime-specific pattern rather than improving stability.
+- Failed before bracket replay and outer holdout on profit-factor and fold-consistency gates.
+
+Decision: discard the rule. Do not add an unattended historical-earnings scrape whose symbol coverage changed between consecutive runs, and do not interpret the strong latest period as repeatable evidence.
+
+Reference: [Fundamentally, Momentum is Fundamental Momentum](https://www.nber.org/papers/w20984) supports earnings-surprise momentum as a research family; it does not validate this consecutive-positive implementation or Yahoo's historical scrape.
