@@ -1,6 +1,6 @@
 import pandas as pd
 
-from market_dashboard.modules.strategies import BullPullbackStrategy, LowVolatilityTrendStrategy, MacdTrendStrategy, Strategy
+from market_dashboard.modules.strategies import BreadthConfirmedTrendStrategy, BullPullbackStrategy, LowVolatilityTrendStrategy, MacdTrendStrategy, Strategy
 
 
 class FixedSignalStrategy(Strategy):
@@ -43,6 +43,26 @@ def test_low_volatility_trend_waits_for_below_normal_volatility():
 
     assert signal.iloc[:200].sum() == 0
     assert signal.iloc[-1] == 1
+
+
+def test_breadth_confirmed_trend_requires_majority_participation():
+    index = pd.date_range("2024-01-01", periods=260, freq="B")
+    price = pd.Series(range(100, 360), index=index, dtype=float)
+    breadth = pd.Series(0.6, index=index)
+    breadth.iloc[-2] = 0.49
+    strategy = BreadthConfirmedTrendStrategy()
+
+    signal = strategy.generate_signals(
+        price,
+        {
+            "ma50": price.rolling(50).mean(),
+            "ma200": price.rolling(200).mean(),
+            "market_breadth": breadth,
+        },
+    )
+
+    assert signal.iloc[-2] == 1
+    assert signal.iloc[-1] == 0
 
 
 def test_no_signals_keeps_equity_flat_and_no_trades():

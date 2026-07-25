@@ -314,6 +314,23 @@ class LowVolatilityTrendStrategy(Strategy):
         return signal.shift(1).fillna(False).astype(float)
 
 
+class BreadthConfirmedTrendStrategy(Strategy):
+    """Trade an established trend only while a majority of the universe participates."""
+
+    def generate_signals(self, price, indicators_dict):
+        ma50 = indicators_dict.get("ma50")
+        ma200 = indicators_dict.get("ma200")
+        market_breadth = indicators_dict.get("market_breadth")
+        if ma50 is None or ma200 is None or market_breadth is None:
+            return pd.Series(0.0, index=price.index, dtype=float)
+        signal = (
+            (ma50 > ma200)
+            & (price.pct_change(63) > 0)
+            & (market_breadth >= 0.5)
+        )
+        return signal.shift(1).fillna(False).astype(float)
+
+
 class BullPullbackStrategy(Strategy):
     """Buy RSI recovery inside a long-term uptrend and exit when stretched."""
 

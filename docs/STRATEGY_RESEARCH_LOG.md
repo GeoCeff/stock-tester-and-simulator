@@ -80,3 +80,15 @@ Reference: [Post-Earnings-Announcement Drift](https://doi.org/10.2307/2491062) d
 Decision: discard the rule. Do not add an unattended historical-earnings scrape whose symbol coverage changed between consecutive runs, and do not interpret the strong latest period as repeatable evidence.
 
 Reference: [Fundamentally, Momentum is Fundamental Momentum](https://www.nber.org/papers/w20984) supports earnings-surprise momentum as a research family; it does not validate this consecutive-positive implementation or Yahoo's historical scrape.
+
+## 2026-07-25 — Majority-breadth trend
+
+- Hypothesis: retain the existing 200-day trend and 63-day momentum checks, but trade only when at least 50% of the fixed 20-stock universe is above its own 200-day moving average. The threshold was fixed before holdout exposure.
+- Development-only signal result: 1,150 trades, 1.1990% expectancy, 1.501 worst-fold profit factor, -12.80% drawdown, and all folds positive. Internal validation produced 329 trades, 1.4473% expectancy, and a 1.793 profit factor.
+- Development-only exact-plan result: 1,037 trades, 1.2308% expectancy, 1.440 worst-fold profit factor, 85% positive symbols, and all folds positive.
+- Untouched holdout result: the signal produced 253 trades, 0.0659% expectancy, a 1.031 profit factor, and -6.71% drawdown. The exact bracket plan produced 214 trades, 0.0250% expectancy, a 1.009 profit factor, and 50% positive symbols.
+- Failed gates: holdout expectancy, profit factor, and exact-plan symbol consistency. No strategy was enabled and no entry was published.
+
+Decision: keep the implementation disabled for its pre-scheduled future evaluation; do not tune the breadth threshold against this holdout.
+
+Reference: [Herding for profits: Market breadth and the cross-section of global equity returns](https://www.sciencedirect.com/science/article/pii/S0264999319312982) supports market breadth as a predictive research family; it does not validate this binary long-only implementation.

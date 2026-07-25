@@ -14,7 +14,7 @@ import pandas as pd
 from .data import get_ticker_frame
 from .indicators import bollinger, moving_averages, rsi
 from .bot_model_pack import build_model_pack, write_model_pack
-from .strategies import BollingerBandsStrategy, BullPullbackStrategy, LowVolatilityTrendStrategy, MacdTrendStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
+from .strategies import BollingerBandsStrategy, BreadthConfirmedTrendStrategy, BullPullbackStrategy, LowVolatilityTrendStrategy, MacdTrendStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
 
 
 STYLE_CONFIG = {
@@ -26,6 +26,7 @@ STRATEGIES = {
     "ma_crossover": MovingAverageCrossover,
     "trend_momentum": TrendMomentumStrategy,
     "low_vol_trend": LowVolatilityTrendStrategy,
+    "breadth_confirmed_trend": BreadthConfirmedTrendStrategy,
     "bull_pullback": BullPullbackStrategy,
     "macd_trend": MacdTrendStrategy,
     "rsi_threshold": lambda **kwargs: RSIStrategy(mode="threshold", **kwargs),
@@ -36,7 +37,7 @@ DEFAULT_CANDIDATES = [
     {"style": style, "strategy": strategy}
     for style in STYLE_CONFIG
     for strategy in STRATEGIES
-    if strategy != "low_vol_trend" or style == "SWING_20D"
+    if strategy not in {"low_vol_trend", "breadth_confirmed_trend"} or style == "SWING_20D"
 ]
 DEFAULT_GATES = {
     "min_development_trades": 30,
@@ -61,10 +62,10 @@ EXECUTION_PLAN_VERSION = "daily-bars-v2"
 HOLDOUT_COOLDOWN_DAYS = 90
 
 
-def _indicators(close):
+def _indicators(close, market_breadth=None):
     ma50, ma200 = moving_averages(close)
     upper, lower = bollinger(close)
-    return {
+    values = {
         "ma50": ma50,
         "ma200": ma200,
         "rsi": rsi(close),
@@ -72,6 +73,14 @@ def _indicators(close):
         "bb_lower": lower,
         "close": close,
     }
+    if market_breadth is not None:
+        values["market_breadth"] = market_breadth.reindex(close.index)
+    return values
+
+
+def _market_breadth(closes):
+    prices = pd.concat(closes, axis=1)
+    return (prices > prices.rolling(200).mean()).mean(axis=1)
 
 
 def _metrics(returns, trade_returns):
@@ -130,6 +139,10 @@ def evaluate_candidate(data, universe, candidate, *, folds=4, warmup=200, cost_b
         raise ValueError("no symbol has enough data")
 
     usable_length = min(len(close) for _, close in prepared.values())
+    market_breadth = _market_breadth({
+        symbol: close.iloc[-usable_length:]
+        for symbol, (_, close) in prepared.items()
+    }) if strategy_name == "breadth_confirmed_trend" else None
     fold_metrics = []
     for start, end in _folds(usable_length, folds, warmup):
         returns_by_symbol = {}
@@ -141,7 +154,13 @@ def evaluate_candidate(data, universe, candidate, *, folds=4, warmup=200, cost_b
                 position_type="fixed",
                 fee_pct=cost_bps_per_side / 10_000,
             )
-            signals = strategy.generate_signals(close.iloc[:end], _indicators(close.iloc[:end]))
+            signals = strategy.generate_signals(
+                close.iloc[:end],
+                _indicators(
+                    close.iloc[:end],
+                    market_breadth.iloc[:end] if market_breadth is not None else None,
+                ),
+            )
             signals.iloc[:start] = 0.0
             result = strategy.compute_positions_and_equity(signals, close.iloc[:end])
             returns_by_symbol[symbol] = result["daily_return"].iloc[start:end]
@@ -212,6 +231,10 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
     if not prepared:
         raise ValueError("no symbol has enough OHLC data")
     usable_length = min(map(len, prepared.values()))
+    market_breadth = _market_breadth({
+        symbol: pd.to_numeric(frame["Close"], errors="coerce").iloc[-usable_length:]
+        for symbol, frame in prepared.items()
+    }) if strategy_name == "breadth_confirmed_trend" else None
     fold_metrics = []
     symbol_folds = {symbol: [] for symbol in prepared}
     for start, end in _folds(usable_length, folds, warmup):
@@ -224,7 +247,7 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                 holding_period=config["holding_period"],
                 position_type="fixed",
                 fee_pct=0,
-            ).generate_signals(close, _indicators(close))
+            ).generate_signals(close, _indicators(close, market_breadth))
             previous = close.shift(1)
             atr = pd.concat([
                 frame["High"] - frame["Low"],
@@ -358,6 +381,15 @@ def _common_length(data, universe):
 
 def _latest_candidates(data, universe, selected):
     rows = []
+    market_breadth = None
+    if any(
+        evaluation.get("accepted") and evaluation.get("strategy") == "breadth_confirmed_trend"
+        for evaluation in selected.values()
+    ):
+        market_breadth = _market_breadth({
+            symbol: pd.to_numeric(get_ticker_frame(data, symbol).get("Close"), errors="coerce").dropna()
+            for symbol in universe
+        })
     for style, evaluation in selected.items():
         if not evaluation.get("accepted"):
             continue
@@ -372,7 +404,7 @@ def _latest_candidates(data, universe, selected):
                 position_type="fixed",
                 fee_pct=0.0,
             )
-            signal = strategy.generate_signals(close, _indicators(close))
+            signal = strategy.generate_signals(close, _indicators(close, market_breadth))
             if signal.empty or float(signal.iloc[-1]) <= 0:
                 continue
             aligned = frame.reindex(close.index)
