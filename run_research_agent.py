@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,30 @@ from market_dashboard.modules.research_agent import publish_research_result, run
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
 NEWS_SNAPSHOT_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "market_research_snapshot.json"
+WATCH_LOCK_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "research_agent.lock"
+
+
+def acquire_watch_lock(path=WATCH_LOCK_PATH):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            if not handle.read(1):
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
 
 
 def refresh_news():
@@ -112,6 +137,10 @@ def main():
     args = parser.parse_args()
     if args.watch_minutes < 0:
         parser.error("--watch-minutes cannot be negative")
+    watch_lock = acquire_watch_lock() if args.watch_minutes > 0 else None
+    if args.watch_minutes > 0 and watch_lock is None:
+        print("Research watcher already running; duplicate exited.")
+        return
 
     while True:
         try:

@@ -338,6 +338,19 @@ def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
     assert result["entries"][0]["news_version"] == "test-news-v1:openai_unavailable"
 
 
+def test_watch_lock_allows_only_one_writer(tmp_path):
+    path = tmp_path / "watch.lock"
+    first = research_runner.acquire_watch_lock(path)
+    try:
+        assert first is not None
+        assert research_runner.acquire_watch_lock(path) is None
+    finally:
+        first.close()
+    third = research_runner.acquire_watch_lock(path)
+    assert third is not None
+    third.close()
+
+
 def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
     path = tmp_path / "paper.json"
     path.write_text(json.dumps({
