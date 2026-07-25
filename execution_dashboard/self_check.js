@@ -1,10 +1,12 @@
 const assert = require("assert");
 const app = require("./app.js");
-const { validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
 
+assert.equal(app.DEFAULT_UNIVERSE.length, 20, "default research universe should be diversified");
+assert(app.DEFAULT_UNIVERSE.every((symbol) => NEWS_TERMS[symbol]?.length), "every default symbol needs company news terms");
 assert(rows.length > 1000, "sample data should include multiple symbols");
 assert(analysis.metrics.length >= 5, "analysis should rank stocks");
 assert(["BULLISH", "NEUTRAL", "BEARISH", "PANIC"].includes(analysis.regime.regime), "regime should be classified");

@@ -13,7 +13,7 @@ from market_dashboard.modules.data import DATA_SOURCE_AUTO, load_market_data
 from market_dashboard.modules.research_agent import publish_research_result, run_research_loop, update_paper_ledger
 
 
-DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,JPM,XOM,LLY,JNJ,PFE"
+DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
 NEWS_SNAPSHOT_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "market_research_snapshot.json"
 
 

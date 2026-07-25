@@ -30,11 +30,21 @@ const NEWS_TERMS = {
   NVDA: ["Nvidia"],
   AMZN: ["Amazon"],
   GOOGL: ["Google", "Alphabet"],
+  META: ["Meta Platforms", "Facebook", "Instagram"],
+  AVGO: ["Broadcom"],
+  TSLA: ["Tesla"],
   JPM: ["JPMorgan", "JP Morgan"],
+  BAC: ["Bank of America"],
   XOM: ["Exxon", "ExxonMobil"],
+  CVX: ["Chevron"],
   LLY: ["Eli Lilly"],
   JNJ: ["Johnson & Johnson", "J&J"],
-  PFE: ["Pfizer"]
+  PFE: ["Pfizer"],
+  UNH: ["UnitedHealth", "United Healthcare"],
+  WMT: ["Walmart"],
+  COST: ["Costco"],
+  HD: ["Home Depot"],
+  PG: ["Procter & Gamble", "P&G"]
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -913,4 +923,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };

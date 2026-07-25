@@ -16,7 +16,7 @@
     SWING_5D: { horizon: 5, riskPct: 0.005, stopAtr: 2.0, targetR: 2.0, minProb: 0.56 },
     SWING_20D: { horizon: 20, riskPct: 0.005, stopAtr: 2.5, targetR: 2.5, minProb: 0.58 }
   };
-  const DEFAULT_UNIVERSE = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "JPM", "XOM", "LLY", "JNJ", "PFE"];
+  const DEFAULT_UNIVERSE = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "TSLA", "JPM", "BAC", "XOM", "CVX", "LLY", "JNJ", "PFE", "UNH", "WMT", "COST", "HD", "PG"];
   const SECTOR_BY_SYMBOL = {
     AAPL: "Technology", MSFT: "Technology", NVDA: "Technology", AMD: "Technology", AVGO: "Technology", ORCL: "Technology",
     AMZN: "Consumer", TSLA: "Consumer", HD: "Consumer", NKE: "Consumer",
@@ -3065,6 +3065,7 @@
   }
 
   return {
+    DEFAULT_UNIVERSE,
     generateSampleData,
     parseCsv,
     analyze,
