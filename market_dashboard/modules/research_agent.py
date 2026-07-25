@@ -38,6 +38,7 @@ DEFAULT_GATES = {
     "min_expectancy": 0.001,
     "min_profit_factor": 1.20,
     "min_positive_fold_ratio": 0.75,
+    "min_positive_symbol_ratio": 0.60,
     "max_drawdown": 0.15,
 }
 DEFAULT_AGENT_RESULT_PATH = (
@@ -189,9 +190,11 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
         raise ValueError("no symbol has enough OHLC data")
     usable_length = min(map(len, prepared.values()))
     fold_metrics = []
+    symbol_folds = {symbol: [] for symbol in prepared}
     for start, end in _folds(usable_length, folds, warmup):
         trade_returns = []
-        for frame in prepared.values():
+        for symbol, frame in prepared.items():
+            symbol_trade_returns = []
             frame = frame.iloc[-usable_length:]
             close = pd.to_numeric(frame["Close"], errors="coerce")
             signals = STRATEGIES[strategy_name](
@@ -242,8 +245,11 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                     exit_price = float(close.iloc[exit_index])
                 if exit_price is None:
                     break
-                trade_returns.append(exit_price / entry - 1 - 2 * cost_bps_per_side / 10_000)
+                trade_return = exit_price / entry - 1 - 2 * cost_bps_per_side / 10_000
+                trade_returns.append(trade_return)
+                symbol_trade_returns.append(trade_return)
                 index = exit_index + 1
+            symbol_folds[symbol].append(_metrics(pd.Series(dtype=float), symbol_trade_returns))
         trades = np.asarray(trade_returns, dtype=float)
         wins = trades[trades > 0]
         losses = trades[trades < 0]
@@ -253,24 +259,45 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
             "expectancy": float(trades.mean()) if trades.size else 0.0,
             "profit_factor": float(wins.sum() / abs(losses.sum())) if losses.size else (999.0 if wins.size else 0.0),
         })
-    development_folds = fold_metrics[:-1]
-    development_trades = sum(row["trades"] for row in development_folds)
-    return {
-        "development": {
-            "trades": development_trades,
+
+    def development_summary(rows):
+        return {
+            "trades": sum(row["trades"] for row in rows),
             "win_rate": float(np.average(
-                [row["win_rate"] for row in development_folds],
-                weights=[max(row["trades"], 1) for row in development_folds],
+                [row["win_rate"] for row in rows],
+                weights=[max(row["trades"], 1) for row in rows],
             )),
             "expectancy": float(np.average(
-                [row["expectancy"] for row in development_folds],
-                weights=[max(row["trades"], 1) for row in development_folds],
+                [row["expectancy"] for row in rows],
+                weights=[max(row["trades"], 1) for row in rows],
             )),
-            "profit_factor": min(row["profit_factor"] for row in development_folds),
-            "positive_fold_ratio": float(np.mean([row["expectancy"] > 0 for row in development_folds])),
-        },
-        "final": fold_metrics[-1],
+            "profit_factor": min(row["profit_factor"] for row in rows),
+            "positive_fold_ratio": float(np.mean([row["expectancy"] > 0 for row in rows])),
+        }
+
+    development_folds = fold_metrics[:-1]
+    development = development_summary(development_folds)
+    by_symbol = {
+        symbol: {
+            "development": development_summary(rows[:-1]),
+            "final": rows[-1],
+        }
+        for symbol, rows in symbol_folds.items()
+    }
+    development["positive_symbol_ratio"] = float(np.mean([
+        row["development"]["expectancy"] > 0 for row in by_symbol.values()
+    ]))
+    final = {
+        **fold_metrics[-1],
+        "positive_symbol_ratio": float(np.mean([
+            row["final"]["expectancy"] > 0 for row in by_symbol.values()
+        ])),
+    }
+    return {
+        "development": development,
+        "final": final,
         "folds": fold_metrics,
+        "by_symbol": by_symbol,
     }
 
 
@@ -286,6 +313,8 @@ def _accept_execution_plan(evaluation, gates):
         failures.append("execution-plan profit factor failed")
     if development["positive_fold_ratio"] < gates["min_positive_fold_ratio"]:
         failures.append("execution-plan fold consistency failed")
+    if min(development["positive_symbol_ratio"], final["positive_symbol_ratio"]) < gates["min_positive_symbol_ratio"]:
+        failures.append("execution-plan symbol consistency failed")
     return not failures, "; ".join(failures) or "published entry and bracket plan passed"
 
 

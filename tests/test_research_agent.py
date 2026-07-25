@@ -74,14 +74,17 @@ def test_research_loop_skips_high_score_candidate_that_fails_development_gates(m
             "expectancy": 0.01,
             "profit_factor": 1.5,
             "positive_fold_ratio": 1.0,
+            "positive_symbol_ratio": 1.0,
         },
         "final": {
             "trades": 30,
             "win_rate": 0.6,
             "expectancy": 0.01,
             "profit_factor": 1.5,
+            "positive_symbol_ratio": 1.0,
         },
         "folds": [],
+        "by_symbol": {},
     })
     monkeypatch.setattr(research_agent, "_latest_candidates", lambda *args: [])
     result = run_research_loop(
