@@ -217,3 +217,40 @@ def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
 
     assert result["entries"][0]["status"] == "PAPER_CANDIDATE_REDUCED"
     assert result["entries"][0]["news_action"] == "reduce"
+
+
+def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
+    path = tmp_path / "paper.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": [
+            {
+                "symbol": "TEST",
+                "style": "SWING_20D",
+                "strategy": "old_strategy",
+                "plan_id": "old-plan",
+                "signal_date": "2025-01-01",
+                "return": 0.01,
+            }
+            for _ in range(30)
+        ],
+    }), encoding="utf-8")
+    result = {
+        "created_at": "2026-01-05T22:00:00Z",
+        "entries": [],
+        "styles": {
+            "SWING_20D": {
+                **research_agent.STYLE_CONFIG["SWING_20D"],
+                "strategy": "trend_momentum",
+                "acceptance": {"status": "pass"},
+            },
+        },
+    }
+
+    summary = update_paper_ledger(result, pd.DataFrame(), path=path)
+
+    assert summary["by_plan"]["old-plan"]["status"] == "validated"
+    assert summary["status"] == "warming_up"
+    assert summary["current_closed_trades"] == 0

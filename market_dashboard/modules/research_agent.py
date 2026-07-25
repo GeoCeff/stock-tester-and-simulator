@@ -366,9 +366,24 @@ def _latest_candidates(data, universe, selected):
                 "target": entry + stop_distance * config["target_r"],
                 "max_hold": config["holding_period"],
                 "entry_valid_bars": ENTRY_VALID_BARS,
+                "stop_atr": config["stop_atr"],
+                "target_r": config["target_r"],
+                "risk_pct": config["risk_pct"],
                 "status": "PENDING_NEWS_AND_LIVE_GATES",
             })
     return rows
+
+
+def _paper_plan_id(row, cost_bps_per_side):
+    config = STYLE_CONFIG[row["style"]]
+    holding_period = row.get("max_hold", row.get("holding_period", config["holding_period"]))
+    return (
+        f"{row['style']}:{row['strategy']}:hold={holding_period}:"
+        f"stop={row.get('stop_atr', config['stop_atr']):g}atr:"
+        f"target={row.get('target_r', config['target_r']):g}r:"
+        f"entry={row.get('entry_valid_bars', ENTRY_VALID_BARS)}:"
+        f"cost={cost_bps_per_side:g}bps"
+    )
 
 
 def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
@@ -386,6 +401,8 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
         ledger = {"schema_version": 1, "positions": [], "closed": [], "cancelled": []}
     ledger.setdefault("cancelled", [])
 
+    for entry in result["entries"]:
+        entry["plan_id"] = _paper_plan_id(entry, cost_bps_per_side)
     current_candidates = {
         (entry["symbol"], entry["style"]): entry
         for entry in result["entries"]
@@ -393,7 +410,13 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
     still_open = []
     for position in ledger["positions"]:
         candidate = current_candidates.get((position["symbol"], position["style"]))
-        if not position.get("entry_date") and (not candidate or candidate.get("news_action") == "reject"):
+        if not position.get("plan_id") and candidate:
+            position["plan_id"] = candidate["plan_id"]
+        if not position.get("entry_date") and (
+            not candidate
+            or candidate.get("news_action") == "reject"
+            or position.get("plan_id") != candidate["plan_id"]
+        ):
             ledger["cancelled"].append({**position, "reason": "research or news gate withdrew pending entry"})
             continue
         frame = get_ticker_frame(data, position["symbol"])
@@ -485,9 +508,15 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
     still_open = [row for row in still_open if row not in rejected]
     ledger["positions"] = still_open
 
-    by_style = {}
-    for style in STYLE_CONFIG:
-        rows = [row for row in ledger["closed"] if row["style"] == style]
+    current_plan_ids = {entry["plan_id"] for entry in result["entries"]}
+    for style, row in result.get("styles", {}).items():
+        if style in STYLE_CONFIG and row.get("acceptance", {}).get("status") == "pass":
+            current_plan_ids.add(_paper_plan_id({"style": style, **row}, cost_bps_per_side))
+
+    by_plan = {}
+    plan_ids = {row.get("plan_id", "legacy-unversioned") for row in ledger["closed"]}
+    for plan_id in sorted(plan_ids | current_plan_ids):
+        rows = [row for row in ledger["closed"] if row.get("plan_id", "legacy-unversioned") == plan_id]
         returns = np.asarray([row["return"] for row in rows], dtype=float)
         wins = returns[returns > 0]
         losses = returns[returns < 0]
@@ -495,19 +524,23 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
         max_drawdown = float((equity / equity.cummax() - 1).min()) if not equity.empty else 0.0
         profit_factor = float(wins.sum() / abs(losses.sum())) if losses.size else (999.0 if wins.size else 0.0)
         expectancy = float(returns.mean()) if returns.size else 0.0
-        by_style[style] = {
+        by_plan[plan_id] = {
             "status": "validated" if len(rows) >= 30 and expectancy >= 0.001 and profit_factor >= 1.2 and max_drawdown >= -0.15 else "warming_up",
             "closed_trades": len(rows),
             "expectancy": expectancy,
             "profit_factor": profit_factor,
             "max_drawdown": max_drawdown,
         }
-    validated_styles = [style for style, summary in by_style.items() if summary["status"] == "validated"]
+    validated_plans = [
+        plan_id for plan_id in current_plan_ids
+        if by_plan.get(plan_id, {}).get("status") == "validated"
+    ]
     ledger["summary"] = {
-        "status": "validated" if validated_styles else "warming_up",
+        "status": "validated" if validated_plans else "warming_up",
         "closed_trades": len(ledger["closed"]),
-        "validated_styles": validated_styles,
-        "by_style": by_style,
+        "current_closed_trades": sum(by_plan[plan_id]["closed_trades"] for plan_id in current_plan_ids),
+        "validated_plans": validated_plans,
+        "by_plan": by_plan,
     }
     ledger["updated_at"] = result["created_at"]
     path.parent.mkdir(parents=True, exist_ok=True)

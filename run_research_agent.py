@@ -86,7 +86,7 @@ def run_once(args):
     passed = [style for style, row in result["styles"].items() if row["acceptance"]["status"] == "pass"]
     print(f"{result['created_at']} evaluated {result['evaluated_candidates']} candidates from {status.get('source', 'market data')}")
     print(f"Passed styles: {', '.join(passed) if passed else 'none; execution remains blocked'}")
-    print(f"Paper evidence: {result['paper_evidence']['status']} ({result['paper_evidence']['closed_trades']} closed trades)")
+    print(f"Paper evidence: {result['paper_evidence']['status']} ({result['paper_evidence']['current_closed_trades']} current-plan closed trades)")
     print(news_status)
     print(json.dumps(result["entries"], indent=2))
     return result
