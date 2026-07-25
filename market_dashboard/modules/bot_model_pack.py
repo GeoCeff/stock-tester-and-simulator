@@ -46,6 +46,7 @@ def build_model_pack(results, universe, created_at=None):
         acceptance = raw.get("acceptance", {}) if hasattr(raw, "get") else {}
         styles[style] = {
             "enabled": bool(raw.get("enabled", False)) if hasattr(raw, "get") else False,
+            "strategy": str(raw.get("strategy", "")) if hasattr(raw, "get") else "",
             "holding_period": int(raw.get("holding_period", 0) or 0) if hasattr(raw, "get") else 0,
             "min_probability": float(raw.get("min_probability", raw.get("minProb", 0.0)) or 0.0) if hasattr(raw, "get") else 0.0,
             "stop_atr": float(raw.get("stop_atr", raw.get("stopAtr", 0.0)) or 0.0) if hasattr(raw, "get") else 0.0,
@@ -72,4 +73,6 @@ def write_model_pack(pack, path=None):
     """Write directly to the execution dashboard unless another path is supplied."""
     path = Path(path or DEFAULT_MODEL_PACK_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_clean(pack), indent=2, sort_keys=True), encoding="utf-8")
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps(_clean(pack), indent=2, sort_keys=True), encoding="utf-8")
+    temporary.replace(path)

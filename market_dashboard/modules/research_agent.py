@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from .data import get_ticker_frame
 from .indicators import bollinger, moving_averages, rsi
+from .bot_model_pack import build_model_pack, write_model_pack
 from .strategies import BollingerBandsStrategy, MovingAverageCrossover, RSIStrategy
 
 
@@ -35,6 +38,9 @@ DEFAULT_GATES = {
     "min_positive_fold_ratio": 0.60,
     "max_drawdown": 0.20,
 }
+DEFAULT_AGENT_RESULT_PATH = (
+    Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_agent.json"
+)
 
 
 def _indicators(close):
@@ -254,9 +260,22 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
             "acceptance": {"status": "pass" if accepted else "reject", "reason": winner["reason"] if winner else "not evaluated"},
         }
     return {
+        "schema_version": 1,
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "universe": universe,
         "styles": styles,
         "entries": _latest_candidates(data, universe, selected),
         "evaluated_candidates": len(evaluations),
     }
+
+
+def publish_research_result(result, *, model_pack_path=None, agent_result_path=None):
+    """Publish one accepted/rejected research snapshot for the execution app."""
+    pack = build_model_pack(result["styles"], result["universe"], created_at=result["created_at"])
+    path = Path(agent_result_path or DEFAULT_AGENT_RESULT_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+    temporary.replace(path)
+    write_model_pack(pack, model_pack_path)
+    return pack

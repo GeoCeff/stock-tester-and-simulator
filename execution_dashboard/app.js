@@ -32,6 +32,7 @@
   const MODEL_VERSION = "heuristic-v2-learning";
   const RESEARCH_VERSION = "ai-research-v1";
   const MODEL_PACK_MAX_AGE_DAYS = 30;
+  const RESEARCH_AGENT_MAX_AGE_DAYS = 5;
   const RESEARCH_MAX_AGE_MINUTES = 30;
   const QUOTE_MAX_AGE_MS = 5000;
   const RULE_VARIANTS = [
@@ -179,7 +180,7 @@
     const status = row.acceptance?.status || "unknown";
     const version = state.modelPack.model_version || state.modelPack.modelVersion || "model pack";
     const date = String(state.modelPack.created_at || state.modelPack.createdAt || "").slice(0, 10) || "unknown date";
-    return `${version} / ${style || "no style"} ${status} / ${date}`;
+    return `${version} / ${row.strategy || style || "no style"} ${status} / ${date}`;
   }
 
   function modelPackGateStatus(metric, style) {
@@ -193,6 +194,24 @@
     const override = symbolOverride(metric.symbol);
     if (override.blocked || override.enabled === false) return "reject";
     return "pass";
+  }
+
+  function researchAgentCandidate(symbol, style) {
+    return state.researchAgent?.entries?.find((entry) => entry.symbol === symbol && entry.style === style) || null;
+  }
+
+  function researchAgentGateStatus(metric, style) {
+    if (!state.researchAgent) {
+      const requiresAgent = Object.values(state.modelPack?.styles || {}).some((row) => row.strategy);
+      return requiresAgent ? "reject" : "pass";
+    }
+    const modelCreatedAt = state.modelPack?.created_at || state.modelPack?.createdAt;
+    const agentCreatedAt = state.researchAgent.created_at || state.researchAgent.createdAt;
+    if (modelCreatedAt && Object.values(state.modelPack?.styles || {}).some((row) => row.strategy) && modelCreatedAt !== agentCreatedAt) return "reject";
+    if (ageMs(agentCreatedAt) > RESEARCH_AGENT_MAX_AGE_DAYS * 86400000) return "reject";
+    const candidate = researchAgentCandidate(metric.symbol, style);
+    if (!candidate) return "reject";
+    return Math.abs(metric.price - candidate.entry) / candidate.entry <= 0.03 ? "pass" : "reject";
   }
 
   function researchAgeMinutes() {
@@ -707,6 +726,7 @@
       eventRisk: eventRiskStatus(metric.symbol, style),
       strategyValidation: strategyValidationStatus(style),
       modelPack: modelPackGateStatus(metric, style),
+      researchAgent: researchAgentGateStatus(metric, style),
       aiResearch: researchGateStatus(metric),
       tradeLearning: learning.status,
       dayTrading: style === "DAY_TRADE" ? dayTradingAllowed() ? "pass" : "reject" : "pass",
@@ -739,6 +759,7 @@
 
   function buildSetup(metric, style, regime) {
     const config = styleConfig(style, metric.symbol);
+    const agentCandidate = researchAgentCandidate(metric.symbol, style);
     const expected = expectedForStyle(metric, style, regime);
     const probability = clamp(metric.probability + expected * 1.8, 0.05, 0.95);
     const gates = gateResults(metric, style, expected, probability, regime);
@@ -751,7 +772,8 @@
     const streakMultiplier = recentLosses >= ACCOUNT.maxConsecutiveLosses ? 0.35 : 1;
     const reduction = (gateStatus === "REDUCE" ? 0.5 : 1) * styleMultiplier * streakMultiplier * learning.multiplier;
     const entry = metric.price;
-    const stopDistance = Math.max(metric.atr * config.stopAtr, metric.price * 0.004);
+    const agentStopDistance = agentCandidate ? agentCandidate.entry - agentCandidate.stop : 0;
+    const stopDistance = Math.max(agentStopDistance, metric.atr * config.stopAtr, metric.price * 0.004);
     const stop = entry - stopDistance;
     const target = entry + stopDistance * config.targetR;
     const riskDollars = ACCOUNT.equity * config.riskPct * reduction;
@@ -790,6 +812,7 @@
       confidence: clamp(metric.score / 100 * 0.55 + probability * 0.30 + regime.score * 0.15, 0, 1),
       gates,
       strategyStats: stats,
+      researchAgent: agentCandidate,
       learning,
       metric,
       marketRegime: regime.regime,
@@ -846,6 +869,7 @@
     serverStore: false,
     auditCount: 0,
     modelPack: null,
+    researchAgent: null,
     researchSnapshot: null,
     researchInFlight: false,
     openAiEnabled: false,
@@ -871,6 +895,7 @@
     await loadState();
     await syncServerHealth();
     await loadModelPack();
+    await loadResearchAgent();
     await loadResearchSnapshot();
     state.data = generateSampleData();
     state.analysis = analyze(state.data, state.universe);
@@ -987,6 +1012,15 @@
       state.modelPack = result.modelPack || null;
     } catch {
       state.modelPack = null;
+    }
+  }
+
+  async function loadResearchAgent() {
+    try {
+      const result = await apiGet("/api/research-agent");
+      state.researchAgent = result.result || null;
+    } catch {
+      state.researchAgent = null;
     }
   }
 
@@ -1115,6 +1149,7 @@
     if (!state.analysis || state.researchInFlight) return;
     state.researchInFlight = true;
     try {
+      await Promise.all([loadModelPack(), loadResearchAgent()]);
       const local = withCachedNews(buildResearchSnapshot(state.data, state.universe));
       state.researchSnapshot = local;
       try {

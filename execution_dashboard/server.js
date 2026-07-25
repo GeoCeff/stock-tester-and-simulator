@@ -16,6 +16,7 @@ const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "app_state.json");
 const AUDIT_FILE = path.join(DATA_DIR, "audit.jsonl");
 const MODEL_PACK_FILE = path.join(DATA_DIR, "bot_model_pack.json");
+const RESEARCH_AGENT_FILE = path.join(DATA_DIR, "research_agent.json");
 const RESEARCH_FILE = path.join(DATA_DIR, "market_research_snapshot.json");
 const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US";
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
@@ -440,6 +441,28 @@ function validateModelPack(pack) {
   return { ok: true };
 }
 
+function validateResearchAgent(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return { ok: false, error: "research agent object required" };
+  if (Number(result.schema_version ?? result.schemaVersion) !== 1) return { ok: false, error: "unsupported research agent schema" };
+  const createdAt = Date.parse(result.created_at || result.createdAt || "");
+  if (!Number.isFinite(createdAt) || createdAt > Date.now() + 300000) return { ok: false, error: "valid created_at required" };
+  if (!Array.isArray(result.entries)) return { ok: false, error: "entries array required" };
+  for (const [index, entry] of result.entries.entries()) {
+    const label = `entry ${index + 1}`;
+    if (!/^[A-Z0-9.-]{1,12}$/.test(String(entry.symbol || ""))) return { ok: false, error: `${label}: invalid symbol` };
+    if (entry.side !== "LONG") return { ok: false, error: `${label}: only LONG is supported` };
+    if (!MODEL_PACK_STYLES.has(entry.style)) return { ok: false, error: `${label}: unsupported style` };
+    if (!Number.isFinite(Date.parse(entry.signal_date || entry.signalDate || ""))) return { ok: false, error: `${label}: valid signal_date required` };
+    const price = Number(entry.entry);
+    const stop = Number(entry.stop);
+    const target = Number(entry.target);
+    if (![price, stop, target].every(Number.isFinite) || stop <= 0 || stop >= price || target <= price) {
+      return { ok: false, error: `${label}: invalid bracket prices` };
+    }
+  }
+  return { ok: true };
+}
+
 function ibkrRequest(method, endpoint, body) {
   return new Promise((resolve) => {
     const target = new URL(`${IBKR_BASE.replace(/\/$/, "")}/${endpoint.replace(/^\//, "")}`);
@@ -573,7 +596,7 @@ async function ibkrDiagnostics() {
 
 async function handleApi(req, res, url) {
   if (url.pathname === "/api/health") {
-    return send(res, 200, { ok: true, ibkrBase: IBKR_BASE, liveOrdersEnabled: LIVE_ORDERS_ENABLED, fullAutoEnabled: FULL_AUTO_ENABLED, openAiEnabled: Boolean(OPENAI_API_KEY), openAiModel: OPENAI_MODEL, stateStore: "data/app_state.json", auditLog: "data/audit.jsonl", modelPack: "data/bot_model_pack.json", researchSnapshot: "data/market_research_snapshot.json" });
+    return send(res, 200, { ok: true, ibkrBase: IBKR_BASE, liveOrdersEnabled: LIVE_ORDERS_ENABLED, fullAutoEnabled: FULL_AUTO_ENABLED, openAiEnabled: Boolean(OPENAI_API_KEY), openAiModel: OPENAI_MODEL, stateStore: "data/app_state.json", auditLog: "data/audit.jsonl", modelPack: "data/bot_model_pack.json", researchAgent: "data/research_agent.json", researchSnapshot: "data/market_research_snapshot.json" });
   }
   if (url.pathname === "/api/state" && req.method === "GET") {
     return send(res, 200, { ok: true, state: readState(), audit: readAudit(200) });
@@ -604,6 +627,11 @@ async function handleApi(req, res, url) {
     writeJsonFile(MODEL_PACK_FILE, modelPack);
     appendAudit({ type: "model_pack_write", source: "dashboard", modelVersion: modelPack.model_version || modelPack.modelVersion || "" });
     return send(res, 200, { ok: true, modelPack });
+  }
+  if (url.pathname === "/api/research-agent" && req.method === "GET") {
+    const stored = readJsonFile(RESEARCH_AGENT_FILE, null);
+    const validation = stored ? validateResearchAgent(stored) : { ok: false, error: "research agent result not found" };
+    return send(res, 200, { ok: true, exists: validation.ok, result: validation.ok ? stored : null, error: stored && !validation.ok ? validation.error : undefined });
   }
   if (url.pathname === "/api/execution-history" && req.method === "GET") {
     return send(res, 200, { ok: true, ...executionHistory() });
@@ -750,4 +778,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { validateLiveOrders, validateAutoOrder, validateModelPack, parseRssItems, newsSentiment, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, parseRssItems, newsSentiment, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
