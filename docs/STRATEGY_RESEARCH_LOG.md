@@ -92,3 +92,35 @@ Reference: [Fundamentally, Momentum is Fundamental Momentum](https://www.nber.or
 Decision: keep the implementation disabled for its pre-scheduled future evaluation; do not tune the breadth threshold against this holdout.
 
 Reference: [Herding for profits: Market breadth and the cross-section of global equity returns](https://www.sciencedirect.com/science/article/pii/S0264999319312982) supports market breadth as a predictive research family; it does not validate this binary long-only implementation.
+
+## 2026-07-25 — Smooth-trend strength
+
+- Hypothesis: require a positive 63-day trend above the 200-day average, with rolling regression strength above the stock's own trailing median.
+- Development-only result: 509 trades, 1.1698% expectancy, 1.110 worst-fold profit factor, -9.17% drawdown, and all folds positive. Internal validation produced 170 trades, 1.4509% expectancy, and a 1.764 profit factor.
+- Failed before bracket replay and outer holdout because the development profit factor remained below 1.20.
+
+Decision: discard the implementation and do not tune the strength threshold against the development folds.
+
+Reference: [Slope, Strength, and Retail Extrapolation](https://papers.ssrn.com/sol3/Delivery.cfm/6731259.pdf?abstractid=6731259&mirid=1) studies trend smoothness; it does not validate this rolling-median adaptation.
+
+## 2026-07-25 — Absolute-strength momentum
+
+- Hypothesis: require the 63-day log return to exceed 1.96 times its 63-day volatility-scaled standard error while price remains above the 200-day average.
+- Development-only result: 215 trades, 0.3638% expectancy, 0.567 worst-fold profit factor, -3.66% drawdown, and only 33% positive folds. Internal validation produced 61 trades, 0.3354% expectancy, and a 1.211 profit factor.
+- Failed before bracket replay and outer holdout on profit-factor and fold-consistency gates.
+
+Decision: discard the implementation; the conventional significance threshold is not a stable trading edge in this universe.
+
+Reference: [Absolute Strength: Exploring Momentum in Stock Returns](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2638004) supports absolute-strength momentum as a research family; it does not validate this volatility-scaled proxy.
+
+## 2026-07-25 — SPY-confirmed trend
+
+- Hypothesis: retain the existing 50/200-day stock trend and positive 63-day momentum checks, but trade only while SPY is above its own 200-day average with positive 63-day momentum. SPY is benchmark context, never a candidate entry.
+- Development-only signal result: 800 trades, 1.0631% expectancy, 1.496 worst-fold profit factor, -12.02% drawdown, and all folds positive. Internal validation produced 316 trades, 1.4161% expectancy, and a 1.827 profit factor.
+- Development-only exact-plan result: 676 trades, 1.2820% expectancy, 1.394 worst-fold profit factor, 80% positive symbols, and all folds positive. Internal validation produced 287 trades, 1.0604% expectancy, a 1.437 profit factor, and 60% positive symbols.
+- Untouched holdout result: the signal produced 232 trades, 0.3252% expectancy, a 1.171 profit factor, and -4.10% drawdown. The exact bracket plan produced 198 trades, 0.2558% expectancy, a 1.095 profit factor, and 50% positive symbols.
+- Failed gates: holdout signal profit factor, exact-plan profit factor, and exact-plan symbol consistency. No strategy was enabled and no entry was published.
+
+Decision: retain the disabled fixed rule for its pre-scheduled future evaluation; do not tune the benchmark windows against this holdout.
+
+Reference: [Time Series Momentum](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2089463) supports trend persistence across assets; it does not validate this SPY-gated individual-stock implementation.

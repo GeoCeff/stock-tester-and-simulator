@@ -331,6 +331,24 @@ class BreadthConfirmedTrendStrategy(Strategy):
         return signal.shift(1).fillna(False).astype(float)
 
 
+class BenchmarkConfirmedTrendStrategy(Strategy):
+    """Trade an established trend only while the broad market is also advancing."""
+
+    def generate_signals(self, price, indicators_dict):
+        ma50 = indicators_dict.get("ma50")
+        ma200 = indicators_dict.get("ma200")
+        benchmark = indicators_dict.get("benchmark_close")
+        if ma50 is None or ma200 is None or benchmark is None:
+            return pd.Series(0.0, index=price.index, dtype=float)
+        signal = (
+            (ma50 > ma200)
+            & (price.pct_change(63) > 0)
+            & (benchmark > benchmark.rolling(200).mean())
+            & (benchmark.pct_change(63) > 0)
+        )
+        return signal.shift(1).fillna(False).astype(float)
+
+
 class BullPullbackStrategy(Strategy):
     """Buy RSI recovery inside a long-term uptrend and exit when stretched."""
 

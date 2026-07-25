@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, load_market_data
-from market_dashboard.modules.research_agent import append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
+from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
 
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
@@ -93,7 +93,7 @@ def run_once(args):
     end = datetime.now(timezone.utc).date() + timedelta(days=1)
     start = end - timedelta(days=round(args.years * 365.25))
     data, status = load_market_data(
-        universe,
+        [*universe, BENCHMARK_SYMBOL],
         start,
         end,
         "1d",
