@@ -297,6 +297,23 @@ class TrendMomentumStrategy(Strategy):
         return signal.shift(1).fillna(False).astype(float)
 
 
+class LowVolatilityTrendStrategy(Strategy):
+    """Trade an established uptrend only when volatility is below its normal level."""
+
+    def generate_signals(self, price, indicators_dict):
+        ma200 = indicators_dict.get("ma200")
+        if ma200 is None:
+            return pd.Series(0.0, index=price.index, dtype=float)
+        realized_volatility = price.pct_change().rolling(20).std() * np.sqrt(252)
+        normal_volatility = realized_volatility.rolling(252, min_periods=126).median()
+        signal = (
+            (price > ma200)
+            & (price.pct_change(63) > 0)
+            & (realized_volatility < normal_volatility)
+        )
+        return signal.shift(1).fillna(False).astype(float)
+
+
 class BullPullbackStrategy(Strategy):
     """Buy RSI recovery inside a long-term uptrend and exit when stretched."""
 

@@ -31,6 +31,7 @@ def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
 
     assert result["styles"]["SWING_5D"]["acceptance"]["status"] == "pass"
     assert result["styles"]["SWING_5D"]["metrics"]["execution_plan"]["final"]["trades"] >= 2
+    assert result["development_diagnostics"][0]["signal_reason"] == "development and internal validation passed"
     assert result["entries"][0]["entry"] > result["entries"][0]["stop"]
     assert result["entries"][0]["target"] > result["entries"][0]["entry"]
 

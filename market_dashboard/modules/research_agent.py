@@ -14,7 +14,7 @@ import pandas as pd
 from .data import get_ticker_frame
 from .indicators import bollinger, moving_averages, rsi
 from .bot_model_pack import build_model_pack, write_model_pack
-from .strategies import BollingerBandsStrategy, BullPullbackStrategy, MacdTrendStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
+from .strategies import BollingerBandsStrategy, BullPullbackStrategy, LowVolatilityTrendStrategy, MacdTrendStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
 
 
 STYLE_CONFIG = {
@@ -25,6 +25,7 @@ STYLE_CONFIG = {
 STRATEGIES = {
     "ma_crossover": MovingAverageCrossover,
     "trend_momentum": TrendMomentumStrategy,
+    "low_vol_trend": LowVolatilityTrendStrategy,
     "bull_pullback": BullPullbackStrategy,
     "macd_trend": MacdTrendStrategy,
     "rsi_threshold": lambda **kwargs: RSIStrategy(mode="threshold", **kwargs),
@@ -35,6 +36,7 @@ DEFAULT_CANDIDATES = [
     {"style": style, "strategy": strategy}
     for style in STYLE_CONFIG
     for strategy in STRATEGIES
+    if strategy != "low_vol_trend" or style == "SWING_20D"
 ]
 DEFAULT_GATES = {
     "min_development_trades": 30,
@@ -178,7 +180,7 @@ def evaluate_candidate(data, universe, candidate, *, folds=4, warmup=200, cost_b
     return {**candidate, "development": development, "final": fold_metrics[-1], "folds": fold_metrics, "score": float(score)}
 
 
-def _accept(evaluation, gates):
+def _accept(evaluation, gates, *, validation_label="untouched final holdout"):
     development = evaluation["development"]
     final = evaluation["final"]
     failures = []
@@ -194,7 +196,7 @@ def _accept(evaluation, gates):
         failures.append("fold consistency failed")
     if min(development["max_drawdown"], final["max_drawdown"]) < -gates["max_drawdown"]:
         failures.append("drawdown limit failed")
-    return not failures, "; ".join(failures) or "development and untouched final holdout passed"
+    return not failures, "; ".join(failures) or f"development and {validation_label} passed"
 
 
 def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, cost_bps_per_side=10):
@@ -619,7 +621,7 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
     diagnostics = []
     diagnostics_by_candidate = {}
     for row in development_evaluations:
-        signal_accepted, signal_reason = _accept(row, gates)
+        signal_accepted, signal_reason = _accept(row, gates, validation_label="internal validation")
         diagnostic = {
             "style": row["style"],
             "strategy": row["strategy"],
@@ -643,12 +645,18 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
         )
         if not ranked:
             continue
-        viable = [row for row in ranked if _accept(row, gates)[0]]
+        viable = [
+            row
+            for row in ranked
+            if _accept(row, gates, validation_label="internal validation")[0]
+        ]
         if not viable:
             winner = ranked[0]
             winner["accepted"] = False
             winner["exposed_to_final"] = False
-            winner["reason"] = "no candidate passed development validation: " + _accept(winner, gates)[1]
+            winner["reason"] = "no candidate passed development validation: " + _accept(
+                winner, gates, validation_label="internal validation"
+            )[1]
             selected[style] = winner
             continue
         executable = []
