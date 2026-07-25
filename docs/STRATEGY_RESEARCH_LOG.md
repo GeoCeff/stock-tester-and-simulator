@@ -1,5 +1,22 @@
 # Strategy Research Log
 
+## Durable strategy watchlist
+
+| Priority | Family | Representative strategies | Current posture | Next valid evidence |
+| --- | --- | --- | --- | --- |
+| A | Low-volatility trend | 200-day trend + 63-day momentum, active only below trailing volatility median | Closest candidate; strong development and holdout returns, but rejected because only 55% of symbols were positive versus the 60% gate. Shadow-paper only. | Accumulate prospective shadow trades and wait for a pre-scheduled fresh holdout; do not tune its windows, volatility threshold, or universe. |
+| B | Defensive / low beta | Monthly low-beta selection, minimum variance | Promising development result, but the worst-fold profit factor was 1.190 versus the fixed 1.20 gate. | Revisit only as a separately registered experiment with materially new data. |
+| C | Trend / momentum | Moving-average crossover, MACD, time-series momentum, SPY confirmation, market breadth | Several variants passed development; trend momentum, breadth, benchmark, and low-volatility variants later failed at least one untouched-holdout gate. Family is cooling down. | Fresh data, not another nearby filter or parameter combination. |
+| C | Mean reversion | RSI, Bollinger bands, pullbacks, weekly reversal, gap reversal | Common implementations were inconsistent across development folds or failed executable-plan gates. | A genuinely distinct, predeclared mechanism; do not tune RSI, z-score, or holding thresholds against observed failures. |
+| C | Breakout / relative strength | 52-week high, cross-sectional momentum, absolute strength | Tested implementations failed development consistency or bracket-plan profit factor. | New point-in-time evidence or a separately registered implementation, not threshold changes. |
+| C | Relative value | Sector pairs, market-neutral pairs, statistical arbitrage | The fixed long-only sector-pair test failed. A proper hedged implementation needs spread, shorting, borrow, and realistic leg-cost data. | Reliable two-leg execution data and predeclared hedge rules. |
+| C | Event driven | Post-earnings drift, earnings revisions, FOMC drift | FOMC drift failed; earnings-event work was stopped because a complete point-in-time event source was unavailable. | Official timestamped filings/events or a complete licensed export. |
+| C | Fundamental factors | Value, quality, profitability, dividend, earnings revisions | Not validly tested by the current price-only dataset. Current fundamentals must not be mapped backward. | Point-in-time fundamentals and estimates with publication dates. |
+| Reject | Calendar effects | Turn-of-month and other seasonality | The tested month-end implementation failed after costs and internal validation. | No retest without a materially different, externally motivated hypothesis. |
+| Out of scope for current data | Volatility / options | Covered calls, volatility carry, dispersion | Daily stock bars cannot validate option surfaces, assignment, spreads, or margin. | Historical option-chain and execution data. |
+
+Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
+
 ## 2026-07-25 — Real-data baseline and evidence correction
 
 - Scope: 20 liquid US stocks, eight years of Yahoo Finance daily bars, five walk-forward folds, and 10 bps cost per side.
