@@ -1,4 +1,6 @@
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
 const app = require("./app.js");
 const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
@@ -102,5 +104,12 @@ assert(ibkrDiagnosis({ configuredStatus: { ok: true, data: { authenticated: true
 assert(app.dailyLimitReasons({ equity: 1000, dailyLossLimit: 0.02, dailyMaxLossDollars: 25, dayPL: -30, dailyProfitTargetDollars: 0, dailyMaxProfitDollars: 0 })[0].includes("daily max loss"));
 assert(app.dailyLimitReasons({ equity: 1000, dailyLossLimit: 0.02, dailyMaxLossDollars: 0, dayPL: 55, dailyProfitTargetDollars: 50, dailyMaxProfitDollars: 0 })[0].includes("profit target"));
 assert.equal(app.estimateSetupFees(10, 20, 22).roundTrip > 0, true);
+
+const dashboardHtml = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+const launcher = fs.readFileSync(path.join(__dirname, "..", "start_all.ps1"), "utf8");
+assert(dashboardHtml.includes("<title>Stock Lab — Research & Execution</title>"), "unified dashboard title should be present");
+assert(dashboardHtml.includes('id="workspace"') && dashboardHtml.includes('id="analysis-hub"'), "primary navigation targets should exist");
+assert(!launcher.includes("8501"), "the unified launcher must not start the retired Streamlit UI");
+assert.equal((launcher.match(/Start-Process "http:/g) || []).length, 1, "the unified launcher should open one browser application");
 
 console.log("self-check passed");
