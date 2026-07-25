@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Performance Analyzer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="eyebrow">Stock Performance Analyzer</div>
+      <h1>Trading Command Center</h1>
+      <p>IBKR-ready scout, risk gate, and execution workstation</p>
+    </div>
+    <div class="top-metrics">
+      <div class="metric">
+        <span>Mode</span>
+        <select id="bot-mode" aria-label="Bot mode">
+          <option value="ALERT_ONLY">Alert only</option>
+          <option value="PAPER">Paper</option>
+          <option value="LIVE_WITH_CONFIRM">Live confirm</option>
+          <option value="FULL_AUTO">Full auto (locked)</option>
+        </select>
+      </div>
+      <div class="metric">
+        <span>Broker</span>
+        <strong id="ibkr-status-top">Offline</strong>
+      </div>
+      <div class="metric">
+        <span>Market</span>
+        <strong id="market-regime">-</strong>
+      </div>
+      <div class="metric">
+        <span>Equity</span>
+        <strong id="account-equity">-</strong>
+      </div>
+      <div class="metric">
+        <span>Open risk</span>
+        <strong id="open-risk">-</strong>
+      </div>
+      <div class="metric">
+        <span>Data</span>
+        <strong id="data-freshness">-</strong>
+      </div>
+      <button id="pause-bot" class="danger-button" type="button">Pause</button>
+      <button id="sync-ibkr" type="button">Sync IBKR</button>
+      <button id="live-quotes" type="button">Live Quotes Off</button>
+      <button id="auto-scout" type="button">Auto Scout Off</button>
+      <button id="view-mode" type="button">Detailed View</button>
+    </div>
+  </header>
+
+  <section id="system-banner" class="system-banner"></section>
+
+  <section id="decision-panel" class="decision-panel" aria-label="Bot recommendation">
+    <div class="decision-main">
+      <span id="decision-status">Bot recommendation</span>
+      <h2 id="decision-title">Loading trade plan</h2>
+      <p id="decision-trade">The scanner is ranking setups and checking risk gates.</p>
+    </div>
+    <div id="decision-numbers" class="decision-numbers"></div>
+    <div id="decision-actions" class="decision-actions"></div>
+  </section>
+
+  <section id="research-panel" class="research-panel" aria-label="AI market research">
+    <div class="research-main">
+      <span id="model-status">Model: heuristic fallback</span>
+      <h2 id="research-title">AI research</h2>
+      <p id="research-summary">Loading market research.</p>
+    </div>
+    <div id="research-numbers" class="research-numbers"></div>
+    <button id="refresh-research" type="button">Refresh Research</button>
+  </section>
+
+  <section class="command-strip" aria-label="Trading command summary">
+    <article>
+      <span>Best Ready Trade</span>
+      <strong id="summary-best-trade">-</strong>
+    </article>
+    <article>
+      <span>System State</span>
+      <strong id="summary-system">-</strong>
+    </article>
+    <article>
+      <span>IBKR Session</span>
+      <strong id="summary-ibkr">-</strong>
+    </article>
+    <article>
+      <span>Next Action</span>
+      <strong id="summary-next-action">-</strong>
+    </article>
+  </section>
+
+  <section class="workflow-strip" aria-label="Workflow status">
+    <article id="step-universe"></article>
+    <article id="step-data"></article>
+    <article id="step-review"></article>
+    <article id="step-risk"></article>
+    <article id="step-execute"></article>
+  </section>
+
+  <main class="workspace">
+    <aside class="left-rail">
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Stocks</h2>
+          <label class="file-import">
+            Import CSV
+            <input id="csv-file" type="file" accept=".csv,text/csv">
+          </label>
+        </div>
+        <div class="universe-box">
+          <label for="universe-input">Stocks to scan</label>
+          <textarea id="universe-input" rows="3" spellcheck="false" placeholder="AAPL MSFT NVDA LLY JPM"></textarea>
+          <div class="universe-actions">
+            <button id="apply-universe" type="button">Apply</button>
+            <button id="fetch-history" type="button">Load IBKR Bars</button>
+          </div>
+          <label for="event-blocklist">Do not trade around</label>
+          <textarea id="event-blocklist" rows="2" spellcheck="false" placeholder="AAPL earnings 2026-06-25"></textarea>
+        </div>
+        <div class="filters" role="group" aria-label="Trade style">
+          <button class="style-filter is-active" type="button" data-style="ALL">All</button>
+          <button class="style-filter" type="button" data-style="DAY_TRADE">Day</button>
+          <button class="style-filter" type="button" data-style="OVERNIGHT_1D">1D</button>
+          <button class="style-filter" type="button" data-style="SWING_5D">5D</button>
+          <button class="style-filter" type="button" data-style="SWING_20D">20D</button>
+        </div>
+        <div class="table-wrap watchlist-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Last</th>
+                <th>20D</th>
+                <th>Score</th>
+              </tr>
+            </thead>
+            <tbody id="watchlist-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Best Trade Ideas</h2>
+        </div>
+        <div id="setup-list" class="setup-list"></div>
+      </section>
+    </aside>
+
+    <section class="center-stage">
+      <section class="panel chart-panel">
+        <div class="panel-header">
+          <div>
+            <h2 id="chart-title">-</h2>
+            <p id="chart-subtitle" class="muted">-</p>
+          </div>
+          <div class="chart-actions">
+            <span id="selected-score" class="score-pill">Score -</span>
+            <span id="selected-confidence" class="score-pill muted-pill">Confidence -</span>
+          </div>
+        </div>
+        <canvas id="price-chart" aria-label="Price chart"></canvas>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Stock Rankings</h2>
+          <input id="symbol-search" type="search" placeholder="Filter symbols" aria-label="Filter symbols">
+        </div>
+        <div class="table-wrap rankings-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Price</th>
+                <th>1D</th>
+                <th>5D</th>
+                <th>20D</th>
+                <th>Vol</th>
+                <th>Trend</th>
+                <th>Liquidity</th>
+                <th>Best setup</th>
+              </tr>
+            </thead>
+            <tbody id="rankings-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <aside class="right-rail">
+      <section class="panel trade-ticket">
+        <div class="panel-header">
+          <h2>Selected Trade</h2>
+          <span id="ticket-status" class="status-badge">-</span>
+        </div>
+        <div id="ticket-body"></div>
+        <div class="ticket-actions">
+          <button id="paper-order" type="button">Approve Paper</button>
+          <button id="queue-live" type="button">Queue Live Approval</button>
+          <button id="live-submit" class="danger-button" type="button">Transmit Live</button>
+          <button id="copy-plan" type="button">Copy Plan</button>
+          <button id="export-plan" type="button">Export CSV</button>
+          <button id="reject-setup" class="ghost-button" type="button">Reject</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Risk Limits</h2>
+        </div>
+        <div id="risk-panel" class="risk-grid"></div>
+      </section>
+
+      <section class="panel ibkr-panel">
+        <div class="panel-header">
+          <h2>Account & Broker Settings</h2>
+          <span id="ibkr-readiness" class="status-badge">-</span>
+        </div>
+        <div class="ibkr-grid">
+          <label>Account equity <input id="account-equity-input" type="number" min="0" step="1000"></label>
+          <label>Buying power <input id="buying-power-input" type="number" min="0" step="1000"></label>
+          <label>Day P/L <input id="day-pl-input" type="number" step="100"></label>
+          <label>Max loss/day <input id="daily-max-loss-input" type="number" min="0" step="10"></label>
+          <label>Profit target/day <input id="daily-profit-target-input" type="number" min="0" step="10"></label>
+          <label>Max profit/day <input id="daily-max-profit-input" type="number" min="0" step="10"></label>
+          <label>Max auto/day <input id="max-auto-trades-input" type="number" min="0" step="1"></label>
+          <label>Day trading
+            <select id="day-trade-eligible">
+              <option value="NO">Not eligible</option>
+              <option value="YES">Eligible</option>
+            </select>
+          </label>
+          <label>Day trade min <input id="day-trade-min-input" type="number" min="0" step="1000"></label>
+          <label>Fee plan
+            <select id="commission-plan">
+              <option value="IBKR_PRO_FIXED">IBKR Pro fixed est.</option>
+              <option value="IBKR_LITE">IBKR Lite est.</option>
+            </select>
+          </label>
+          <label>Fee/share <input id="commission-per-share-input" type="number" min="0" step="0.001"></label>
+          <label>Min fee <input id="min-commission-input" type="number" min="0" step="0.01"></label>
+          <label>IBKR mode
+            <select id="ibkr-mode">
+              <option value="PAPER">Paper</option>
+              <option value="LIVE_CONFIRM">Live confirm</option>
+            </select>
+          </label>
+          <label>Live confirmation <input id="live-confirm-text" type="text" placeholder="LIVE SYMBOL"></label>
+          <label class="full-width">IBKR account
+            <select id="ibkr-account">
+              <option value="">Not synced</option>
+            </select>
+          </label>
+          <label class="file-import full-width">
+            Import positions CSV
+            <input id="positions-file" type="file" accept=".csv,text/csv">
+          </label>
+          <label class="file-import full-width">
+            Import open orders CSV
+            <input id="orders-file" type="file" accept=".csv,text/csv">
+          </label>
+        </div>
+        <div id="ibkr-diagnostics" class="broker-diagnostics"></div>
+      </section>
+    </aside>
+  </main>
+
+  <section class="bottom-blotter">
+    <div class="tabs" role="tablist" aria-label="Blotter tabs">
+      <button class="tab is-active" type="button" data-tab="journal">Bot Journal</button>
+      <button class="tab" type="button" data-tab="orders">Open Orders</button>
+      <button class="tab" type="button" data-tab="ibkr">IBKR Checklist</button>
+      <button class="tab" type="button" data-tab="leaderboard">Auto Scout</button>
+      <button class="tab" type="button" data-tab="strategy">Strategy Eval</button>
+      <button class="tab" type="button" data-tab="sectors">Sectors</button>
+      <button class="tab" type="button" data-tab="why">Why Trade</button>
+      <button class="tab" type="button" data-tab="performance">Performance</button>
+      <button class="tab" type="button" data-tab="prediction">Prediction</button>
+      <button class="tab" type="button" data-tab="validator">Validator</button>
+      <button class="tab" type="button" data-tab="learning">Learning Graph</button>
+      <button class="tab" type="button" data-tab="works">What Works</button>
+      <button class="tab" type="button" data-tab="fails">What Fails</button>
+      <button class="tab" type="button" data-tab="replay">Replay</button>
+      <button class="tab" type="button" data-tab="optimizer">Optimizer</button>
+      <button class="tab" type="button" data-tab="attribution">Attribution</button>
+      <button class="tab" type="button" data-tab="model">Model</button>
+      <button class="tab" type="button" data-tab="research">Research</button>
+      <button class="tab" type="button" data-tab="exposure">Exposure</button>
+      <button class="tab" type="button" data-tab="health">Model/Data Health</button>
+    </div>
+    <div id="blotter-content" class="blotter-content"></div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
