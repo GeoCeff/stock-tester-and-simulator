@@ -3,16 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stock Performance Analyzer</title>
+  <title>Stock Lab — Research & Execution</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand-block">
-      <div class="eyebrow">Stock Performance Analyzer</div>
-      <h1>Trading Command Center</h1>
-      <p>IBKR-ready scout, risk gate, and execution workstation</p>
+      <div class="brand-mark" aria-hidden="true">SL</div>
+      <div>
+        <div class="eyebrow">Research + execution</div>
+        <h1>Stock Lab</h1>
+        <p>One workspace from backtest to trade plan</p>
+      </div>
     </div>
+    <nav class="app-nav" aria-label="Primary workspace">
+      <button class="section-link is-active" type="button" data-section="workspace">Trade desk</button>
+      <button class="section-link" type="button" data-section="analysis-hub" data-analysis-tab="research">Research</button>
+      <button class="section-link" type="button" data-section="analysis-hub" data-analysis-tab="strategy">Backtests</button>
+      <button class="section-link" type="button" data-section="analysis-hub" data-analysis-tab="performance">Portfolio</button>
+      <button class="section-link" type="button" data-section="analysis-hub" data-analysis-tab="journal">Activity</button>
+    </nav>
     <div class="top-metrics">
       <div class="metric">
         <span>Mode</span>
@@ -100,7 +110,7 @@
     <article id="step-execute"></article>
   </section>
 
-  <main class="workspace">
+  <main id="workspace" class="workspace">
     <aside class="left-rail">
       <section class="panel">
         <div class="panel-header">
@@ -269,28 +279,50 @@
     </aside>
   </main>
 
-  <section class="bottom-blotter">
-    <div class="tabs" role="tablist" aria-label="Blotter tabs">
-      <button class="tab is-active" type="button" data-tab="journal">Bot Journal</button>
-      <button class="tab" type="button" data-tab="orders">Open Orders</button>
-      <button class="tab" type="button" data-tab="ibkr">IBKR Checklist</button>
-      <button class="tab" type="button" data-tab="leaderboard">Auto Scout</button>
-      <button class="tab" type="button" data-tab="strategy">Strategy Eval</button>
-      <button class="tab" type="button" data-tab="sectors">Sectors</button>
-      <button class="tab" type="button" data-tab="why">Why Trade</button>
-      <button class="tab" type="button" data-tab="performance">Performance</button>
-      <button class="tab" type="button" data-tab="prediction">Prediction</button>
-      <button class="tab" type="button" data-tab="validator">Validator</button>
-      <button class="tab" type="button" data-tab="learning">Learning Graph</button>
-      <button class="tab" type="button" data-tab="works">What Works</button>
-      <button class="tab" type="button" data-tab="fails">What Fails</button>
-      <button class="tab" type="button" data-tab="replay">Replay</button>
-      <button class="tab" type="button" data-tab="optimizer">Optimizer</button>
-      <button class="tab" type="button" data-tab="attribution">Attribution</button>
-      <button class="tab" type="button" data-tab="model">Model</button>
-      <button class="tab" type="button" data-tab="research">Research</button>
-      <button class="tab" type="button" data-tab="exposure">Exposure</button>
-      <button class="tab" type="button" data-tab="health">Model/Data Health</button>
+  <section id="analysis-hub" class="bottom-blotter">
+    <header class="analysis-heading">
+      <div>
+        <span class="eyebrow">Unified analysis</span>
+        <h2>Research & strategy lab</h2>
+      </div>
+      <p>Backtests, market research, model checks, and trading history in one place.</p>
+    </header>
+    <div class="tabs" role="tablist" aria-label="Analysis views">
+      <div class="tab-group">
+        <span>Monitor</span>
+        <button class="tab is-active" type="button" data-tab="journal">Journal</button>
+        <button class="tab" type="button" data-tab="orders">Orders</button>
+        <button class="tab" type="button" data-tab="ibkr">IBKR</button>
+      </div>
+      <div class="tab-group">
+        <span>Discover</span>
+        <button class="tab" type="button" data-tab="leaderboard">Auto scout</button>
+        <button class="tab" type="button" data-tab="research">News research</button>
+        <button class="tab" type="button" data-tab="sectors">Sectors</button>
+        <button class="tab" type="button" data-tab="why">Trade thesis</button>
+      </div>
+      <div class="tab-group">
+        <span>Test</span>
+        <button class="tab" type="button" data-tab="strategy">Strategies</button>
+        <button class="tab" type="button" data-tab="replay">Replay</button>
+        <button class="tab" type="button" data-tab="optimizer">Optimizer</button>
+        <button class="tab" type="button" data-tab="validator">Validator</button>
+        <button class="tab" type="button" data-tab="prediction">Prediction</button>
+      </div>
+      <div class="tab-group">
+        <span>Learn</span>
+        <button class="tab" type="button" data-tab="learning">Learning graph</button>
+        <button class="tab" type="button" data-tab="works">What works</button>
+        <button class="tab" type="button" data-tab="fails">What fails</button>
+        <button class="tab" type="button" data-tab="attribution">Attribution</button>
+        <button class="tab" type="button" data-tab="model">Model</button>
+      </div>
+      <div class="tab-group">
+        <span>Control</span>
+        <button class="tab" type="button" data-tab="performance">Performance</button>
+        <button class="tab" type="button" data-tab="exposure">Exposure</button>
+        <button class="tab" type="button" data-tab="health">System health</button>
+      </div>
     </div>
     <div id="blotter-content" class="blotter-content"></div>
   </section>

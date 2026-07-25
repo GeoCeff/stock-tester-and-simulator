@@ -4,12 +4,11 @@ A single repository for market research, strategy backtesting, paper trading, an
 
 This project is for education and research. It is not financial advice. Live trading is disabled unless you deliberately start a live mode and every execution safety gate passes.
 
-## Applications
+## One Application
 
-- `market_dashboard/` — Python/Streamlit research lab for market data, indicators, backtests, Quant Lab strategies, portfolio risk, and paper simulation.
-- `execution_dashboard/` — dependency-free Node dashboard for live quotes, model/research gates, IBKR synchronization, order planning, audits, and deliberately armed execution.
+Stock Lab opens one browser application for market research, backtests, strategy validation, paper trading, portfolio risk, news gates, IBKR synchronization, and deliberately armed execution.
 
-The applications share `execution_dashboard/data/bot_model_pack.json`. The backtester writes validated strategy settings; the execution dashboard validates and reads them. Malformed, stale, disabled, or rejected model packs cannot approve an order.
+The Python engine in `market_dashboard/modules/` and `run_research_agent.py` remains the research and validation backend. It writes validated settings to `execution_dashboard/data/bot_model_pack.json`; the unified dashboard validates and reads them. Malformed, stale, disabled, or rejected model packs cannot approve an order.
 
 ## Quick Start
 
@@ -27,9 +26,9 @@ python -m venv .venv
 .\start_all.ps1
 ```
 
-The research lab opens at `http://127.0.0.1:8501`; the execution dashboard opens at `http://127.0.0.1:8787`.
+Stock Lab opens at `http://127.0.0.1:8787`.
 
-Stop both:
+Stop it:
 
 ```powershell
 .\stop_all.ps1
@@ -75,15 +74,7 @@ The execution dashboard reloads the agent result and model pack whenever researc
 
 Backtests are hypothetical, so a pass is a paper-trading candidate—not a promise of future profit. Paper trade before deliberately enabling any live mode.
 
-## Run Applications Separately
-
-Research lab:
-
-```powershell
-.\.venv\Scripts\python.exe -m streamlit run market_dashboard\dashboard.py
-```
-
-Safe execution dashboard:
+## Run the Dashboard Directly
 
 ```powershell
 cd execution_dashboard
@@ -101,13 +92,12 @@ node execution_dashboard\self_check.js
 
 ## Project Structure
 
-- `market_dashboard/modules/` — data loading, indicators, strategies, backtests, simulator, Quant Lab, portfolio, and model-pack export
+- `market_dashboard/modules/` — data loading, indicators, strategies, backtests, simulation, portfolio analysis, and model-pack export
 - `run_research_agent.py` — bounded walk-forward search and daily repeat mode
 - `research_agent_task.ps1` — persistent per-user Windows launcher
-- `market_dashboard/ui/` — shared Streamlit theme and components
-- `execution_dashboard/` — live dashboard, local API, IBKR bridge, operator scripts, and Node self-check
+- `execution_dashboard/` — unified Stock Lab UI, local API, IBKR bridge, operator scripts, and Node self-check
 - `tests/` — Python test suite
-- `docs/` — research-app implementation notes and archived documents
+- `docs/` — implementation notes and archived documents
 
 ## License
 

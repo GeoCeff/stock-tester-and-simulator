@@ -867,7 +867,7 @@
     quotePollInFlight: false,
     autoScout: false,
     autoScoutSeen: new Set(),
-    viewMode: "SIMPLE",
+    viewMode: "DETAILED",
     liveOrdersEnabled: false,
     fullAutoEnabled: false,
     autoOrderInFlight: false,
@@ -939,7 +939,7 @@
         }
       }
       state.universe = Array.isArray(saved.universe) && saved.universe.length ? saved.universe : state.universe;
-      state.viewMode = saved.viewMode === "DETAILED" ? "DETAILED" : "SIMPLE";
+      state.viewMode = saved.viewMode === "FOCUS" ? "FOCUS" : "DETAILED";
       state.orders = Array.isArray(saved.orders) ? saved.orders : [];
       state.closedTrades = Array.isArray(saved.closedTrades) ? saved.closedTrades : [];
       state.ibkrTrades = Array.isArray(saved.ibkrTrades) ? saved.ibkrTrades : [];
@@ -1204,6 +1204,18 @@
         renderBlotter();
       });
     });
+    document.querySelectorAll(".section-link").forEach((button) => {
+      button.addEventListener("click", () => {
+        const analysisTab = button.dataset.analysisTab;
+        if (analysisTab) {
+          state.viewMode = "DETAILED";
+          state.activeTab = analysisTab;
+          render();
+        }
+        document.querySelectorAll(".section-link").forEach((item) => item.classList.toggle("is-active", item === button));
+        document.getElementById(button.dataset.section)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
     document.getElementById("symbol-search").addEventListener("input", renderRankings);
     document.getElementById("paper-order").addEventListener("click", submitPaperOrder);
     document.getElementById("queue-live").addEventListener("click", queueLiveOrder);
@@ -1218,7 +1230,7 @@
     document.getElementById("live-quotes").addEventListener("click", toggleLiveQuotes);
     document.getElementById("auto-scout").addEventListener("click", toggleAutoScout);
     document.getElementById("view-mode").addEventListener("click", () => {
-      state.viewMode = state.viewMode === "DETAILED" ? "SIMPLE" : "DETAILED";
+      state.viewMode = state.viewMode === "DETAILED" ? "FOCUS" : "DETAILED";
       state.journal.unshift(journalLine(`View mode changed to ${state.viewMode.toLowerCase()}`, "View"));
       saveState();
       render();
@@ -1278,7 +1290,7 @@
     document.getElementById("ibkr-status-top").textContent = state.ibkr.status;
     document.getElementById("live-quotes").textContent = state.liveQuotes ? "Live Quotes On" : "Live Quotes Off";
     document.getElementById("auto-scout").textContent = state.autoScout ? "Auto Scout On" : "Auto Scout Off";
-    document.getElementById("view-mode").textContent = state.viewMode === "DETAILED" ? "Simple View" : "Detailed View";
+    document.getElementById("view-mode").textContent = state.viewMode === "DETAILED" ? "Focus View" : "Full Workspace";
     const universeInput = document.getElementById("universe-input");
     if (document.activeElement !== universeInput) universeInput.value = state.universe.join(", ");
     const eventInput = document.getElementById("event-blocklist");
