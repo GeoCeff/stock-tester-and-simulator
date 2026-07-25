@@ -34,6 +34,7 @@
   const MODEL_PACK_MAX_AGE_DAYS = 30;
   const RESEARCH_AGENT_MAX_AGE_DAYS = 5;
   const RESEARCH_MAX_AGE_MINUTES = 30;
+  const RESEARCH_REFRESH_MS = 60 * 60 * 1000;
   const QUOTE_MAX_AGE_MS = 5000;
   const RULE_VARIANTS = [
     { name: "Tight 1.5R", stopAtr: 1.5, targetR: 1.5, minProb: 0.55 },
@@ -904,6 +905,7 @@
     wireEvents();
     render();
     refreshResearch(true).then(() => render()).catch(() => {});
+    setInterval(() => refreshResearch(true).then(() => render()).catch(() => {}), RESEARCH_REFRESH_MS);
   }
 
   async function loadState() {

@@ -37,21 +37,30 @@ Stop both:
 
 ## Research-to-Execution Flow
 
-1. Research and backtest in Streamlit.
-2. Accept only results that passed the required validation.
-3. Build and write the shared model pack:
+Run the bounded research agent once:
 
-   ```python
-   from market_dashboard.modules.bot_model_pack import build_model_pack, write_model_pack
+```powershell
+.\.venv\Scripts\python.exe .\run_research_agent.py
+```
 
-   pack = build_model_pack(validated_results, universe)
-   write_model_pack(pack)
-   ```
+Or keep it running once per day:
 
-4. Open the execution dashboard. It automatically loads the shared pack.
-5. Paper trade first. Live orders remain behind server flags, IBKR authentication, account limits, quote freshness, model/research gates, and explicit confirmation.
+```powershell
+.\.venv\Scripts\python.exe .\run_research_agent.py --watch-minutes 1440
+```
 
-`write_model_pack(pack)` defaults to the correct monorepo location. Pass a path only when exporting elsewhere.
+The agent:
+
+1. downloads real daily data without demo fallback;
+2. tests the built-in strategies and holding periods with estimated costs;
+3. selects on development folds;
+4. validates the winner on one untouched final fold;
+5. publishes passing model settings and current entry/stop/target candidates;
+6. publishes a rejected result when nothing passes.
+
+The execution dashboard reloads the agent result and model pack whenever research refreshes. Only matching, fresh signals can pass its research-agent gate. While the dashboard is open, technical/news research refreshes hourly; unavailable news stays explicitly unavailable. News and every existing account, quote, model, learning, fee, and IBKR gate can still reduce or reject a setup.
+
+Backtests are hypothetical, so a pass is a paper-trading candidate—not a promise of future profit. Paper trade before deliberately enabling any live mode.
 
 ## Run Applications Separately
 
@@ -80,6 +89,7 @@ node execution_dashboard\self_check.js
 ## Project Structure
 
 - `market_dashboard/modules/` — data loading, indicators, strategies, backtests, simulator, Quant Lab, portfolio, and model-pack export
+- `run_research_agent.py` — bounded walk-forward search and daily repeat mode
 - `market_dashboard/ui/` — shared Streamlit theme and components
 - `execution_dashboard/` — live dashboard, local API, IBKR bridge, operator scripts, and Node self-check
 - `tests/` — Python test suite

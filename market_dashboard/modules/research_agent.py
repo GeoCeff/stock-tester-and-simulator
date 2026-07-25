@@ -32,11 +32,12 @@ DEFAULT_CANDIDATES = [
     for strategy in STRATEGIES
 ]
 DEFAULT_GATES = {
-    "min_development_trades": 12,
-    "min_final_trades": 3,
-    "min_profit_factor": 1.10,
-    "min_positive_fold_ratio": 0.60,
-    "max_drawdown": 0.20,
+    "min_development_trades": 30,
+    "min_final_trades": 10,
+    "min_expectancy": 0.001,
+    "min_profit_factor": 1.20,
+    "min_positive_fold_ratio": 0.75,
+    "max_drawdown": 0.15,
 }
 DEFAULT_AGENT_RESULT_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_agent.json"
@@ -159,9 +160,9 @@ def _accept(evaluation, gates):
         failures.append("not enough development trades")
     if final["trades"] < gates["min_final_trades"]:
         failures.append("not enough final-holdout trades")
-    if development["expectancy"] <= 0 or final["expectancy"] <= 0:
-        failures.append("expectancy was not positive")
-    if development["profit_factor"] < gates["min_profit_factor"] or final["profit_factor"] <= 1:
+    if development["expectancy"] < gates["min_expectancy"] or final["expectancy"] < gates["min_expectancy"]:
+        failures.append("expectancy was too small")
+    if development["profit_factor"] < gates["min_profit_factor"] or final["profit_factor"] < gates["min_profit_factor"]:
         failures.append("profit factor failed")
     if development["positive_fold_ratio"] < gates["min_positive_fold_ratio"]:
         failures.append("fold consistency failed")
