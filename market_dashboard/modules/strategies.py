@@ -319,6 +319,19 @@ class BullPullbackStrategy(Strategy):
         return signal.shift(1).fillna(0.0)
 
 
+class MacdTrendStrategy(Strategy):
+    """Follow positive MACD momentum only above the long-term trend."""
+
+    def generate_signals(self, price, indicators_dict):
+        ma200 = indicators_dict.get("ma200")
+        if ma200 is None:
+            return pd.Series(0.0, index=price.index, dtype=float)
+        macd_line = price.ewm(span=12, adjust=False).mean() - price.ewm(span=26, adjust=False).mean()
+        macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+        signal = (macd_line > macd_signal) & (price > ma200)
+        return signal.shift(1).fillna(False).astype(float)
+
+
 class RSIStrategy(Strategy):
     """RSI-based strategy with two modes: threshold and mean-reversion."""
 

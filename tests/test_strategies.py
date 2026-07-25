@@ -1,6 +1,6 @@
 import pandas as pd
 
-from market_dashboard.modules.strategies import BullPullbackStrategy, Strategy
+from market_dashboard.modules.strategies import BullPullbackStrategy, MacdTrendStrategy, Strategy
 
 
 class FixedSignalStrategy(Strategy):
@@ -19,6 +19,16 @@ def test_bull_pullback_waits_one_bar_and_exits_when_stretched():
     signal = BullPullbackStrategy().generate_signals(pd.Series(range(5), index=index), indicators)
 
     assert signal.tolist() == [0, 0, 1, 1, 0]
+
+
+def test_macd_trend_uses_only_prior_bar_information():
+    index = pd.date_range("2026-01-01", periods=40, freq="B")
+    price = pd.Series([*range(100, 139), 1], index=index)
+    indicators = {"ma200": pd.Series(50, index=index)}
+
+    signal = MacdTrendStrategy().generate_signals(price, indicators)
+
+    assert signal.iloc[-1] == 1
 
 
 def test_no_signals_keeps_equity_flat_and_no_trades():

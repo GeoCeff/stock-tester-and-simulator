@@ -14,7 +14,7 @@ import pandas as pd
 from .data import get_ticker_frame
 from .indicators import bollinger, moving_averages, rsi
 from .bot_model_pack import build_model_pack, write_model_pack
-from .strategies import BollingerBandsStrategy, BullPullbackStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
+from .strategies import BollingerBandsStrategy, BullPullbackStrategy, MacdTrendStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
 
 
 STYLE_CONFIG = {
@@ -26,6 +26,7 @@ STRATEGIES = {
     "ma_crossover": MovingAverageCrossover,
     "trend_momentum": TrendMomentumStrategy,
     "bull_pullback": BullPullbackStrategy,
+    "macd_trend": MacdTrendStrategy,
     "rsi_threshold": lambda **kwargs: RSIStrategy(mode="threshold", **kwargs),
     "rsi_mean_reversion": lambda **kwargs: RSIStrategy(mode="mean_reversion", **kwargs),
     "bollinger": BollingerBandsStrategy,
