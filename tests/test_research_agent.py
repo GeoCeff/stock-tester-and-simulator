@@ -323,6 +323,29 @@ def test_recent_rejected_holdout_trials_ignores_passes_and_expired_trials(tmp_pa
     assert trials == {("SWING_20D", "recent_reject")}
 
 
+def test_recent_rejected_holdout_trials_blocks_the_strategy_family(tmp_path):
+    path = tmp_path / "history.jsonl"
+    path.write_text(json.dumps({
+        "created_at": "2026-07-20T00:00:00Z",
+        "styles": {
+            "SWING_20D": {
+                "strategy": "trend_momentum",
+                "status": "reject",
+                "holdout_exposed": True,
+            },
+        },
+    }) + "\n", encoding="utf-8")
+
+    trials = recent_rejected_holdout_trials(
+        path=path,
+        now=pd.Timestamp("2026-07-25", tz="UTC").to_pydatetime(),
+    )
+
+    assert ("SWING_20D", "trend_momentum") in trials
+    assert ("SWING_20D", "benchmark_confirmed_trend") in trials
+    assert ("SWING_20D", "rsi_mean_reversion") not in trials
+
+
 def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
     dates = pd.date_range("2026-01-05", periods=2, freq="B")
     data = pd.DataFrame({

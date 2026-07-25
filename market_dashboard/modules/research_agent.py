@@ -34,6 +34,18 @@ STRATEGIES = {
     "rsi_mean_reversion": lambda **kwargs: RSIStrategy(mode="mean_reversion", **kwargs),
     "bollinger": BollingerBandsStrategy,
 }
+STRATEGY_FAMILIES = {
+    "ma_crossover": "trend",
+    "trend_momentum": "trend",
+    "low_vol_trend": "trend",
+    "breadth_confirmed_trend": "trend",
+    "benchmark_confirmed_trend": "trend",
+    "macd_trend": "trend",
+    "bull_pullback": "mean_reversion",
+    "rsi_threshold": "mean_reversion",
+    "rsi_mean_reversion": "mean_reversion",
+    "bollinger": "mean_reversion",
+}
 DEFAULT_CANDIDATES = [
     {"style": style, "strategy": strategy}
     for style in STYLE_CONFIG
@@ -850,14 +862,14 @@ def run_research_loop(
                 "unselected candidates were not exposed to the final holdout",
                 "development-only validation folds are labeled separately from the final holdout",
                 "selection ranks plans by executable development evidence, not signal score alone",
-                "recently rejected rules are not repeatedly exposed to the same rolling holdout",
+                "recently rejected strategy families are not repeatedly exposed to the same rolling holdout",
             ],
         },
     }
 
 
 def recent_rejected_holdout_trials(*, path=None, now=None, cooldown_days=HOLDOUT_COOLDOWN_DAYS):
-    """Return rejected strategy names still inside their next holdout trial cooldown."""
+    """Return rejected strategy families still inside their next holdout trial cooldown."""
     path = Path(path or DEFAULT_RESEARCH_HISTORY_PATH)
     if not path.exists():
         return set()
@@ -872,9 +884,14 @@ def recent_rejected_holdout_trials(*, path=None, now=None, cooldown_days=HOLDOUT
         if created_at < cutoff:
             continue
         for style, row in record.get("styles", {}).items():
-            # ponytail: strategy names are trial IDs; use a new name for materially changed rules.
             if row.get("holdout_exposed") and row.get("status") == "reject":
-                trials.add((style, row.get("strategy", "")))
+                strategy = row.get("strategy", "")
+                family = STRATEGY_FAMILIES.get(strategy, strategy)
+                family_members = [
+                    name for name in STRATEGIES
+                    if STRATEGY_FAMILIES.get(name, name) == family
+                ] or [strategy]
+                trials.update((style, name) for name in family_members)
     return trials
 
 

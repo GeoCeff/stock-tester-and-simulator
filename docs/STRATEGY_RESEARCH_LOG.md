@@ -124,3 +124,33 @@ Reference: [Absolute Strength: Exploring Momentum in Stock Returns](https://pape
 Decision: retain the disabled fixed rule for its pre-scheduled future evaluation; do not tune the benchmark windows against this holdout.
 
 Reference: [Time Series Momentum](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2089463) supports trend persistence across assets; it does not validate this SPY-gated individual-stock implementation.
+
+## 2026-07-25 — Strategy-family cooldown correction
+
+- Mistake corrected: cooldowns previously blocked only an exact rejected strategy name, allowing closely related trend filters to reuse the same outer holdout under new names.
+- Change: a rejected holdout trial now cools down its entire strategy family for 90 days. The current trend family includes moving-average, momentum, low-volatility, breadth-confirmed, benchmark-confirmed, and MACD trend rules.
+- Safety effect: new mean-reversion or other genuinely distinct families may still be researched, but another trend variant cannot be selected for the same holdout during cooldown.
+
+Decision: treat the outer holdout as family-level evidence and stop trend-parameter mining until genuinely new data accumulates.
+
+## 2026-07-25 — Extreme weekly reversal
+
+- Hypothesis: after a five-day loss of at least 1.96 volatility-scaled standard errors, wait one day and hold for five trading days.
+- Development-only result: 287 trades, -0.4259% expectancy, 0.457 worst-fold profit factor, -8.46% drawdown, and only 33% positive folds.
+- Internal validation improved to 96 trades, 0.3987% expectancy, and a 1.681 profit factor, but the earlier folds contradicted a repeatable edge.
+- Failed before bracket replay and outer holdout on expectancy, profit-factor, and fold-consistency gates.
+
+Decision: discard the implementation and treat the recent reversal as regime-specific, not as validation.
+
+Reference: [Short-Term Return Reversal: The Long and the Short of It](https://doi.org/10.2139/SSRN.2022061) supports liquidity-driven reversal as a research family; it does not validate this price-only extreme-loss proxy.
+
+## 2026-07-25 — Month-end seasonality
+
+- Hypothesis: enter at the close of the final business day of each month and hold for five trading days, with no price-fitted threshold.
+- Development-only result: 1,020 trades, 0.0872% expectancy, 0.904 worst-fold profit factor, -7.04% drawdown, and 67% positive folds.
+- Internal validation produced 320 trades, -0.1293% expectancy, and a 0.837 profit factor.
+- Failed before bracket replay and outer holdout on expectancy, profit-factor, and fold-consistency gates after costs.
+
+Decision: discard the implementation; the broad historical calendar effect did not survive this executable stock-level adaptation.
+
+Reference: [Are Seasonal Anomalies Real? A Ninety-Year Perspective](https://doi.org/10.1093/rfs/1.4.403) documents turn-of-month seasonality; it does not validate this five-day individual-stock implementation.
