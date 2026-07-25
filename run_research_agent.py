@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, load_market_data
-from market_dashboard.modules.research_agent import publish_research_result, run_research_loop, update_paper_ledger
+from market_dashboard.modules.research_agent import append_research_history, publish_research_result, run_research_loop, update_paper_ledger
 
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
@@ -117,6 +117,7 @@ def run_once(args):
     apply_news_snapshot(result)
     result["paper_evidence"] = update_paper_ledger(result, data, cost_bps_per_side=args.cost_bps)
     publish_research_result(result)
+    append_research_history(result)
     passed = [style for style, row in result["styles"].items() if row["acceptance"]["status"] == "pass"]
     print(f"{result['created_at']} evaluated {result['evaluated_candidates']} candidates from {status.get('source', 'market data')}")
     print(f"Passed styles: {', '.join(passed) if passed else 'none; execution remains blocked'}")

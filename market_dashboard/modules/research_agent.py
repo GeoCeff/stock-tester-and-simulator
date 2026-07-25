@@ -51,6 +51,9 @@ DEFAULT_AGENT_RESULT_PATH = (
 DEFAULT_PAPER_LEDGER_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_paper.json"
 )
+DEFAULT_RESEARCH_HISTORY_PATH = (
+    Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
+)
 ENTRY_VALID_BARS = 3
 EXECUTION_PLAN_VERSION = "daily-bars-v2"
 
@@ -335,6 +338,16 @@ def _accept_execution_plan(evaluation, gates):
     return not failures, "; ".join(failures) or "published entry and bracket plan passed"
 
 
+def _execution_score(evaluation):
+    development = evaluation["development"]
+    return (
+        development["expectancy"] * 100
+        + min(development["profit_factor"], 5)
+        + development["positive_fold_ratio"]
+        + development["positive_symbol_ratio"]
+    )
+
+
 def _common_length(data, universe):
     lengths = [len(pd.to_numeric(get_ticker_frame(data, symbol).get("Close"), errors="coerce").dropna()) for symbol in universe]
     return min(lengths) if lengths else 0
@@ -603,6 +616,24 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
         )
         for candidate in candidates
     ]
+    diagnostics = []
+    diagnostics_by_candidate = {}
+    for row in development_evaluations:
+        signal_accepted, signal_reason = _accept(row, gates)
+        diagnostic = {
+            "style": row["style"],
+            "strategy": row["strategy"],
+            "score": row["score"],
+            "signal_status": "pass" if signal_accepted else "reject",
+            "signal_reason": signal_reason,
+            "development": row["development"],
+            "development_validation": row["final"],
+            "execution_status": "not_evaluated",
+            "execution_reason": "signal failed development validation" if not signal_accepted else "pending",
+            "selected": False,
+        }
+        diagnostics.append(diagnostic)
+        diagnostics_by_candidate[(row["style"], row["strategy"])] = diagnostic
     selected = {}
     for style in STYLE_CONFIG:
         ranked = sorted(
@@ -616,6 +647,7 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
         if not viable:
             winner = ranked[0]
             winner["accepted"] = False
+            winner["exposed_to_final"] = False
             winner["reason"] = "no candidate passed development validation: " + _accept(winner, gates)[1]
             selected[style] = winner
             continue
@@ -629,22 +661,39 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
                 warmup=warmup,
                 cost_bps_per_side=cost_bps_per_side,
             )
-            if _accept_execution_plan(execution_plan, gates)[0]:
-                executable.append(row)
+            execution_accepted, execution_reason = _accept_execution_plan(execution_plan, gates)
+            diagnostic = diagnostics_by_candidate[(style, row["strategy"])]
+            diagnostic["execution_status"] = "pass" if execution_accepted else "reject"
+            diagnostic["execution_reason"] = execution_reason
+            diagnostic["execution_plan"] = {
+                "development": execution_plan["development"],
+                "development_validation": execution_plan["final"],
+            }
+            if execution_accepted:
+                executable.append({
+                    **row,
+                    "selection_execution_plan": execution_plan,
+                    "execution_score": _execution_score(execution_plan),
+                })
         if not executable:
             winner = viable[0]
             winner["accepted"] = False
+            winner["exposed_to_final"] = False
             winner["reason"] = "no candidate passed development execution validation"
             selected[style] = winner
             continue
+        executable.sort(key=lambda row: row["execution_score"], reverse=True)
+        selection_winner = executable[0]
         winner = evaluate_candidate(
             data,
             universe,
-            {"style": style, "strategy": executable[0]["strategy"]},
+            {"style": style, "strategy": selection_winner["strategy"]},
             folds=folds,
             warmup=warmup,
             cost_bps_per_side=cost_bps_per_side,
         )
+        winner["selection_evaluation"] = selection_winner
+        winner["exposed_to_final"] = True
         signal_accepted, signal_reason = _accept(winner, gates)
         winner["execution_plan"] = evaluate_execution_plan(
             data,
@@ -658,6 +707,7 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
         winner["accepted"] = signal_accepted and execution_accepted
         winner["reason"] = signal_reason if not signal_accepted else execution_reason
         selected[style] = winner
+        diagnostics_by_candidate[(style, winner["strategy"])]["selected"] = True
 
     styles = {
         "DAY_TRADE": {
@@ -668,13 +718,21 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
     for style, config in STYLE_CONFIG.items():
         winner = selected.get(style)
         accepted = bool(winner and winner["accepted"])
+        exposed_to_final = bool(winner and winner.get("exposed_to_final"))
+        selection_evaluation = winner.get("selection_evaluation", {}) if winner else {}
         styles[style] = {
             **config,
             "enabled": accepted,
             "strategy": winner["strategy"] if winner else "",
             "metrics": {
                 "development": winner["development"],
-                "final_holdout": winner["final"],
+                "development_validation": (
+                    selection_evaluation.get("final", {})
+                    if exposed_to_final
+                    else winner["final"]
+                ),
+                "final_holdout": winner["final"] if exposed_to_final else {},
+                "holdout_exposed": exposed_to_final,
                 "execution_plan": winner.get("execution_plan", {}),
             } if winner else {},
             "acceptance": {"status": "pass" if accepted else "reject", "reason": winner["reason"] if winner else "not evaluated"},
@@ -686,7 +744,71 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
         "styles": styles,
         "entries": _latest_candidates(data, universe, selected),
         "evaluated_candidates": len(development_evaluations),
+        "development_diagnostics": diagnostics,
+        "research_notes": {
+            "what_worked": [
+                f"{row['style']} {row['strategy']}: signal and execution plan passed development validation"
+                for row in diagnostics
+                if row["signal_status"] == "pass" and row["execution_status"] == "pass"
+            ],
+            "what_failed": [
+                f"{row['style']} {row['strategy']}: "
+                f"{row['signal_reason'] if row['signal_status'] == 'reject' else row['execution_reason']}"
+                for row in diagnostics
+                if row["signal_status"] == "reject" or row["execution_status"] == "reject"
+            ],
+            "holdout_results": [
+                f"{style} {row['strategy']}: {row['reason']}"
+                for style, row in selected.items()
+                if row.get("exposed_to_final")
+            ],
+            "mistakes_avoided": [
+                "unselected candidates were not exposed to the final holdout",
+                "development-only validation folds are labeled separately from the final holdout",
+                "selection ranks plans by executable development evidence, not signal score alone",
+            ],
+        },
     }
+
+
+def append_research_history(result, *, path=None, max_records=200):
+    """Persist compact run lessons without mixing them into acceptance evidence."""
+    path = Path(path or DEFAULT_RESEARCH_HISTORY_PATH)
+    record = {
+        "created_at": result["created_at"],
+        "research_notes": result.get("research_notes", {}),
+        "paper_evidence": result.get("paper_evidence", {}),
+        "entries": [
+            {
+                key: entry.get(key)
+                for key in ("symbol", "style", "strategy", "signal_date", "entry", "stop", "target", "news_action", "status", "plan_id")
+            }
+            for entry in result.get("entries", [])
+        ],
+        "styles": {
+            style: {
+                "strategy": row.get("strategy", ""),
+                "status": row.get("acceptance", {}).get("status", "reject"),
+                "reason": row.get("acceptance", {}).get("reason", "not evaluated"),
+                "holdout_exposed": row.get("metrics", {}).get("holdout_exposed", False),
+            }
+            for style, row in result.get("styles", {}).items()
+        },
+    }
+    existing = []
+    if path.exists():
+        existing = [
+            line for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if existing and json.loads(existing[-1]).get("created_at") == result["created_at"]:
+            return record
+    lines = [*existing, json.dumps(record, sort_keys=True)][-max_records:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return record
 
 
 def publish_research_result(result, *, model_pack_path=None, agent_result_path=None):

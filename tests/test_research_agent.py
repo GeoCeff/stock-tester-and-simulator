@@ -5,7 +5,7 @@ import json
 
 import market_dashboard.modules.research_agent as research_agent
 import run_research_agent as research_runner
-from market_dashboard.modules.research_agent import publish_research_result, run_research_loop, update_paper_ledger
+from market_dashboard.modules.research_agent import append_research_history, publish_research_result, run_research_loop, update_paper_ledger
 
 
 def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
@@ -155,6 +155,117 @@ def test_research_loop_skips_candidate_with_untradeable_development_bracket(monk
 
     assert result["styles"]["SWING_20D"]["strategy"] == "tradeable"
     assert final_exposures == ["tradeable"]
+
+
+def test_research_loop_selects_best_executable_plan_not_best_signal_score(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=360, freq="B")
+    data = pd.DataFrame({("Close", "TEST"): np.arange(360) + 100}, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    final_exposures = []
+
+    def fake_evaluate(frame, universe, candidate, **kwargs):
+        if len(frame) == len(data):
+            final_exposures.append(candidate["strategy"])
+        metric = {
+            "trades": 100,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5,
+            "max_drawdown": -0.1,
+            "total_return": 0.2,
+        }
+        return {
+            **candidate,
+            "development": {**metric, "positive_fold_ratio": 1.0},
+            "final": metric,
+            "folds": [metric],
+            "score": 10.0 if candidate["strategy"] == "signal_best" else 5.0,
+        }
+
+    def fake_execution(frame, universe, candidate, **kwargs):
+        expectancy = 0.002 if candidate["strategy"] == "signal_best" else 0.01
+        metric = {
+            "trades": 100,
+            "win_rate": 0.6,
+            "expectancy": expectancy,
+            "profit_factor": 1.3,
+            "positive_fold_ratio": 1.0,
+            "positive_symbol_ratio": 1.0,
+        }
+        return {"development": metric, "final": metric, "folds": [], "by_symbol": {}}
+
+    monkeypatch.setattr(research_agent, "evaluate_candidate", fake_evaluate)
+    monkeypatch.setattr(research_agent, "evaluate_execution_plan", fake_execution)
+    monkeypatch.setattr(research_agent, "_latest_candidates", lambda *args: [])
+    result = run_research_loop(
+        data,
+        ["TEST"],
+        candidates=[
+            {"style": "SWING_20D", "strategy": "signal_best"},
+            {"style": "SWING_20D", "strategy": "plan_best"},
+        ],
+        folds=4,
+        warmup=200,
+    )
+
+    assert result["styles"]["SWING_20D"]["strategy"] == "plan_best"
+    assert final_exposures == ["plan_best"]
+    assert next(row for row in result["development_diagnostics"] if row["strategy"] == "plan_best")["selected"]
+
+
+def test_development_reject_does_not_masquerade_as_final_holdout(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=360, freq="B")
+    data = pd.DataFrame({("Close", "TEST"): np.arange(360) + 100}, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    metric = {
+        "trades": 100,
+        "win_rate": 0.4,
+        "expectancy": -0.01,
+        "profit_factor": 0.8,
+        "max_drawdown": -0.1,
+        "total_return": -0.2,
+    }
+    monkeypatch.setattr(research_agent, "evaluate_candidate", lambda frame, universe, candidate, **kwargs: {
+        **candidate,
+        "development": {**metric, "positive_fold_ratio": 0.0},
+        "final": metric,
+        "folds": [metric],
+        "score": 1.0,
+    })
+    monkeypatch.setattr(research_agent, "_latest_candidates", lambda *args: [])
+
+    result = run_research_loop(
+        data,
+        ["TEST"],
+        candidates=[{"style": "SWING_5D", "strategy": "reject_me"}],
+        folds=4,
+        warmup=200,
+    )
+    metrics = result["styles"]["SWING_5D"]["metrics"]
+
+    assert metrics["holdout_exposed"] is False
+    assert metrics["final_holdout"] == {}
+    assert metrics["development_validation"]["expectancy"] == -0.01
+
+
+def test_research_history_is_deduplicated_and_bounded(tmp_path):
+    path = tmp_path / "history.jsonl"
+    result = {
+        "created_at": "2026-07-25T00:00:00Z",
+        "research_notes": {"what_worked": [], "what_failed": ["none passed"]},
+        "paper_evidence": {"status": "warming_up"},
+        "entries": [],
+        "styles": {"SWING_20D": {"strategy": "trend_momentum", "acceptance": {"status": "reject", "reason": "holdout failed"}, "metrics": {"holdout_exposed": True}}},
+    }
+
+    append_research_history(result, path=path, max_records=2)
+    append_research_history(result, path=path, max_records=2)
+    append_research_history({**result, "created_at": "2026-07-26T00:00:00Z"}, path=path, max_records=2)
+    append_research_history({**result, "created_at": "2026-07-27T00:00:00Z"}, path=path, max_records=2)
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+    assert [row["created_at"] for row in records] == ["2026-07-26T00:00:00Z", "2026-07-27T00:00:00Z"]
+    assert records[-1]["styles"]["SWING_20D"]["holdout_exposed"] is True
 
 
 def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):

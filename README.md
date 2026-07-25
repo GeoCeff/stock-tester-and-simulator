@@ -66,7 +66,8 @@ The agent:
 7. publishes model settings and candidates only when both the signal and execution plan pass;
 8. advances a real-data forward paper ledger in `execution_dashboard/data/research_paper.json`;
 9. refreshes the existing news gate for current candidates without requiring the browser to be open;
-10. publishes a rejected result when nothing passes.
+10. records compact run lessons in `execution_dashboard/data/research_history.jsonl`;
+11. publishes a rejected result when nothing passes.
 
 Paper signals use the published limit entry for up to three future bars, allow only one open position per symbol/style, and are cancelled before filling if research or news withdraws them. Daily bars never claim a target on the ambiguous fill bar, and a gap through a stop exits at the worse opening price. Trades do not count as evidence until a real later bar closes them by stop, target, or maximum hold. Evidence is isolated by the strategy-code fingerprint, execution-engine version, news-gate/model version, holding period, bracket rules, entry validity, and cost assumption so old implementations cannot validate a new plan. At least 30 closed trades in one exact plan, positive cost-adjusted expectancy, profit factor of 1.2, and drawdown within 15% are required for validation.
 
