@@ -265,6 +265,75 @@ def test_development_reject_does_not_masquerade_as_final_holdout(monkeypatch):
     assert metrics["development_validation"]["expectancy"] == -0.01
 
 
+def test_holdout_reject_is_shadow_only(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=360, freq="B")
+    data = pd.DataFrame({("Close", "TEST"): np.arange(360) + 100}, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+
+    def fake_evaluate(frame, universe, candidate, **kwargs):
+        passing = len(frame) < len(data)
+        development = {
+            "trades": 100,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5,
+            "max_drawdown": -0.1,
+            "total_return": 0.2,
+            "positive_fold_ratio": 1.0,
+        }
+        final = {
+            **development,
+            "expectancy": 0.01 if passing else -0.01,
+            "profit_factor": 1.5 if passing else 0.8,
+        }
+        return {**candidate, "development": development, "final": final, "folds": [final], "score": 10.0}
+
+    monkeypatch.setattr(research_agent, "evaluate_candidate", fake_evaluate)
+    monkeypatch.setattr(research_agent, "evaluate_execution_plan", lambda *args, **kwargs: {
+        "development": {
+            "trades": 100,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5,
+            "positive_fold_ratio": 1.0,
+            "positive_symbol_ratio": 1.0,
+        },
+        "final": {
+            "trades": 30,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5,
+            "positive_symbol_ratio": 1.0,
+        },
+        "folds": [],
+        "by_symbol": {},
+    })
+    monkeypatch.setattr(research_agent, "_latest_candidates", lambda frame, universe, selected: [
+        {
+            "symbol": "TEST",
+            "style": style,
+            "strategy": row["strategy"],
+            "signal_date": "2026-01-05",
+            "entry": 100,
+            "stop": 95,
+            "target": 110,
+        }
+        for style, row in selected.items()
+    ])
+
+    result = run_research_loop(
+        data,
+        ["TEST"],
+        candidates=[{"style": "SWING_20D", "strategy": "candidate"}],
+        folds=4,
+        warmup=200,
+    )
+
+    assert result["entries"] == []
+    assert result["shadow_entries"][0]["status"] == "SHADOW_PAPER_ONLY"
+    assert result["styles"]["SWING_20D"]["acceptance"]["status"] == "reject"
+
+
 def test_research_history_is_deduplicated_and_bounded(tmp_path):
     path = tmp_path / "history.jsonl"
     result = {
@@ -512,6 +581,16 @@ def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):
 
     assert ledger["positions"] == []
     assert ledger["cancelled"][0]["reason"] == "research or news gate withdrew pending entry"
+
+    shadow_path = tmp_path / "shadow.json"
+    update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data, path=shadow_path)
+    update_paper_ledger(
+        {"created_at": "2026-01-06T22:00:00Z", "entries": []},
+        data,
+        path=shadow_path,
+        cancel_withdrawn=False,
+    )
+    assert len(json.loads(shadow_path.read_text(encoding="utf-8"))["positions"]) == 1
 
 
 def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):

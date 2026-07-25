@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, load_market_data
-from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
+from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, DEFAULT_SHADOW_LEDGER_PATH, append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
 
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
@@ -117,12 +117,20 @@ def run_once(args):
     news_status = refresh_news()
     apply_news_snapshot(result)
     result["paper_evidence"] = update_paper_ledger(result, data, cost_bps_per_side=args.cost_bps)
+    result["shadow_evidence"] = update_paper_ledger(
+        {"created_at": result["created_at"], "entries": result["shadow_entries"]},
+        data,
+        path=DEFAULT_SHADOW_LEDGER_PATH,
+        cost_bps_per_side=args.cost_bps,
+        cancel_withdrawn=False,
+    )
     publish_research_result(result)
     append_research_history(result)
     passed = [style for style, row in result["styles"].items() if row["acceptance"]["status"] == "pass"]
     print(f"{result['created_at']} evaluated {result['evaluated_candidates']} candidates from {status.get('source', 'market data')}")
     print(f"Passed styles: {', '.join(passed) if passed else 'none; execution remains blocked'}")
     print(f"Paper evidence: {result['paper_evidence']['status']} ({result['paper_evidence']['current_closed_trades']} current-plan closed trades)")
+    print(f"Shadow evidence: {result['shadow_evidence']['closed_trades']} closed development-qualified observations")
     print(news_status)
     print(json.dumps(result["entries"], indent=2))
     return result

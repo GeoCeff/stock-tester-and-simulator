@@ -81,6 +81,7 @@ const researchOrder = {
 assert.equal(validateResearchOrder(researchOrder, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, true);
 assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, paper_evidence: { status: "warming_up", validated_plans: [] } }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, planId: "other-plan" }, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [], shadow_entries: [validatedCandidate] }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
 assert.equal(validateResearchOrder(researchOrder, validatedAgent, Date.parse("2026-08-01T00:00:00Z")).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, false);
 assert.deepEqual(liveReplyIds([{ id: "reply-1", message: ["confirm"] }, { order_id: "not-a-reply" }]), ["reply-1"]);

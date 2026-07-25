@@ -67,6 +67,9 @@ DEFAULT_AGENT_RESULT_PATH = (
 DEFAULT_PAPER_LEDGER_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_paper.json"
 )
+DEFAULT_SHADOW_LEDGER_PATH = (
+    Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_shadow.json"
+)
 DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
@@ -410,7 +413,7 @@ def _latest_candidates(data, universe, selected):
     market_breadth = None
     benchmark_close = None
     if any(
-        evaluation.get("accepted") and evaluation.get("strategy") == "breadth_confirmed_trend"
+        evaluation.get("strategy") == "breadth_confirmed_trend"
         for evaluation in selected.values()
     ):
         market_breadth = _market_breadth({
@@ -418,13 +421,11 @@ def _latest_candidates(data, universe, selected):
             for symbol in universe
         })
     if any(
-        evaluation.get("accepted") and evaluation.get("strategy") == "benchmark_confirmed_trend"
+        evaluation.get("strategy") == "benchmark_confirmed_trend"
         for evaluation in selected.values()
     ):
         benchmark_close = _benchmark_close(data)
     for style, evaluation in selected.items():
-        if not evaluation.get("accepted"):
-            continue
         config = STYLE_CONFIG[style]
         for symbol in universe:
             frame = get_ticker_frame(data, symbol)
@@ -488,7 +489,7 @@ def _paper_plan_id(row, cost_bps_per_side):
     )
 
 
-def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
+def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel_withdrawn=True):
     """Advance prior signals on real future bars, then queue today's new signals."""
     path = Path(path or DEFAULT_PAPER_LEDGER_PATH)
     if path.exists():
@@ -514,7 +515,7 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
         candidate = current_candidates.get((position["symbol"], position["style"]))
         if not position.get("plan_id") and candidate:
             position["plan_id"] = candidate["plan_id"]
-        if not position.get("entry_date") and (
+        if cancel_withdrawn and not position.get("entry_date") and (
             not candidate
             or candidate.get("news_action") == "reject"
             or position.get("plan_id") != candidate["plan_id"]
@@ -523,8 +524,8 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
             continue
         frame = get_ticker_frame(data, position["symbol"])
         if not position.get("entry_date"):
-            position.setdefault("limit_entry", candidate.get("entry"))
-            position.setdefault("entry_valid_bars", candidate.get("entry_valid_bars", ENTRY_VALID_BARS))
+            position.setdefault("limit_entry", (candidate or {}).get("entry"))
+            position.setdefault("entry_valid_bars", (candidate or {}).get("entry_valid_bars", ENTRY_VALID_BARS))
         future = frame.loc[frame.index > pd.Timestamp(position["signal_date"])]
         if future.empty:
             still_open.append(position)
@@ -756,6 +757,7 @@ def run_research_loop(
             if execution_accepted:
                 executable.append({
                     **row,
+                    "development_qualified": True,
                     "selection_execution_plan": execution_plan,
                     "execution_score": _execution_score(execution_plan),
                 })
@@ -789,6 +791,7 @@ def run_research_loop(
             cost_bps_per_side=cost_bps_per_side,
         )
         winner["selection_evaluation"] = selection_winner
+        winner["development_qualified"] = True
         winner["exposed_to_final"] = True
         signal_accepted, signal_reason = _accept(winner, gates)
         winner["execution_plan"] = evaluate_execution_plan(
@@ -833,12 +836,23 @@ def run_research_loop(
             } if winner else {},
             "acceptance": {"status": "pass" if accepted else "reject", "reason": winner["reason"] if winner else "not evaluated"},
         }
+    accepted = {style: row for style, row in selected.items() if row.get("accepted")}
+    shadow = {
+        style: row
+        for style, row in selected.items()
+        if row.get("development_qualified") and not row.get("accepted")
+    }
+    shadow_entries = _latest_candidates(data, universe, shadow)
+    for entry in shadow_entries:
+        entry["status"] = "SHADOW_PAPER_ONLY"
+        entry["reason"] = selected[entry["style"]]["reason"]
     return {
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "universe": universe,
         "styles": styles,
-        "entries": _latest_candidates(data, universe, selected),
+        "entries": _latest_candidates(data, universe, accepted),
+        "shadow_entries": shadow_entries,
         "evaluated_candidates": len(development_evaluations),
         "development_diagnostics": diagnostics,
         "research_notes": {
@@ -902,12 +916,20 @@ def append_research_history(result, *, path=None, max_records=200):
         "created_at": result["created_at"],
         "research_notes": result.get("research_notes", {}),
         "paper_evidence": result.get("paper_evidence", {}),
+        "shadow_evidence": result.get("shadow_evidence", {}),
         "entries": [
             {
                 key: entry.get(key)
                 for key in ("symbol", "style", "strategy", "signal_date", "entry", "stop", "target", "news_action", "status", "plan_id")
             }
             for entry in result.get("entries", [])
+        ],
+        "shadow_entries": [
+            {
+                key: entry.get(key)
+                for key in ("symbol", "style", "strategy", "signal_date", "entry", "stop", "target", "status", "plan_id")
+            }
+            for entry in result.get("shadow_entries", [])
         ],
         "styles": {
             style: {

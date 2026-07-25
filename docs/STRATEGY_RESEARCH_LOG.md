@@ -226,3 +226,12 @@ Reference: [Betting Against Beta](https://www.nber.org/papers/w16601) supports b
 Decision: discard the implementation. Do not replace individual pairs, change the spread window, or lower the entry threshold after observing the recent-regime improvement.
 
 Reference: [Pairs Trading: Performance of a Relative Value Arbitrage Rule](https://www.nber.org/papers/w7032) supports the relative-value research family; it does not validate this long-only fixed-pair adaptation.
+
+## 2026-07-26 — Prospective shadow evidence
+
+- Mistake corrected: only final-holdout passes could enter the paper ledger, so development-qualified rejections produced no prospective evidence while repeated historical variants increased selection bias.
+- Change: development signal and exact bracket-plan passes now publish to a separate shadow-only ledger after a final-holdout rejection or family cooldown. Pending shadow limits retain their original three-bar validity even if the strategy is not selected on the next run.
+- Safety boundary: shadow observations are not actionable entries, do not count as required paper validation, and cannot match the live-order validator. The existing final-holdout, news, exact-plan, and live risk gates remain unchanged.
+- First real-data run: `low_vol_trend` produced two shadow-only plans, JPM and UNH, dated 2026-07-24. Actionable entries remained zero and both ledgers remain `warming_up`.
+
+Decision: stop adding historical variants for now. Accumulate genuinely future bars in the shadow ledger, treat the observations as research diagnostics only, and require a separate final-holdout pass before any strategy can enter the actionable paper lane.
