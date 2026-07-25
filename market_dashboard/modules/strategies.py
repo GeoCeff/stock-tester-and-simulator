@@ -285,6 +285,18 @@ class MovingAverageCrossover(Strategy):
         return signal
 
 
+class TrendMomentumStrategy(Strategy):
+    """Long only when the long-term trend and three-month momentum agree."""
+
+    def generate_signals(self, price, indicators_dict):
+        ma50 = indicators_dict.get("ma50")
+        ma200 = indicators_dict.get("ma200")
+        if ma50 is None or ma200 is None:
+            return pd.Series(0.0, index=price.index, dtype=float)
+        signal = (ma50 > ma200) & (price.pct_change(63) > 0)
+        return signal.shift(1).fillna(False).astype(float)
+
+
 class RSIStrategy(Strategy):
     """RSI-based strategy with two modes: threshold and mean-reversion."""
 

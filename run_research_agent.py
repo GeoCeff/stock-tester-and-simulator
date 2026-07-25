@@ -16,8 +16,8 @@ DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,JPM,XOM,LLY,JNJ,PFE"
 
 def run_once(args):
     universe = [symbol.strip().upper() for symbol in args.symbols.split(",") if symbol.strip()]
-    if not universe or args.years <= 0 or args.folds < 3 or args.warmup < 20 or args.cost_bps < 0:
-        raise ValueError("symbols, positive years, at least 3 folds, warmup >= 20, and non-negative costs required")
+    if not universe or args.years <= 0 or args.folds < 4 or args.warmup < 20 or args.cost_bps < 0:
+        raise ValueError("symbols, positive years, at least 4 folds, warmup >= 20, and non-negative costs required")
     end = datetime.now(timezone.utc).date() + timedelta(days=1)
     start = end - timedelta(days=round(args.years * 365.25))
     data, status = load_market_data(

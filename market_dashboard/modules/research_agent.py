@@ -12,7 +12,7 @@ import pandas as pd
 from .data import get_ticker_frame
 from .indicators import bollinger, moving_averages, rsi
 from .bot_model_pack import build_model_pack, write_model_pack
-from .strategies import BollingerBandsStrategy, MovingAverageCrossover, RSIStrategy
+from .strategies import BollingerBandsStrategy, MovingAverageCrossover, RSIStrategy, TrendMomentumStrategy
 
 
 STYLE_CONFIG = {
@@ -22,6 +22,7 @@ STYLE_CONFIG = {
 }
 STRATEGIES = {
     "ma_crossover": MovingAverageCrossover,
+    "trend_momentum": TrendMomentumStrategy,
     "rsi_threshold": lambda **kwargs: RSIStrategy(mode="threshold", **kwargs),
     "rsi_mean_reversion": lambda **kwargs: RSIStrategy(mode="mean_reversion", **kwargs),
     "bollinger": BollingerBandsStrategy,
@@ -171,6 +172,11 @@ def _accept(evaluation, gates):
     return not failures, "; ".join(failures) or "development and untouched final holdout passed"
 
 
+def _common_length(data, universe):
+    lengths = [len(pd.to_numeric(get_ticker_frame(data, symbol).get("Close"), errors="coerce").dropna()) for symbol in universe]
+    return min(lengths) if lengths else 0
+
+
 def _latest_candidates(data, universe, selected):
     rows = []
     for style, evaluation in selected.items():
@@ -219,28 +225,53 @@ def _latest_candidates(data, universe, selected):
 
 
 def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, cost_bps_per_side=10, gates=None):
-    """Search the bounded candidate set, then validate each winner once."""
+    """Select on development data, then expose only each winner to the final holdout."""
     universe = [str(symbol).strip().upper() for symbol in universe if str(symbol).strip()]
     if not universe:
         raise ValueError("universe required")
+    if folds < 4:
+        raise ValueError("at least four folds required to preserve a final holdout")
     gates = {**DEFAULT_GATES, **(gates or {})}
-    evaluations = [
+    candidates = candidates or DEFAULT_CANDIDATES
+    usable_length = _common_length(data, universe)
+    final_start = _folds(usable_length, folds, warmup)[-1][0]
+    common_dates = get_ticker_frame(data, universe[0]).dropna(subset=["Close"]).index[-usable_length:]
+    development_data = data.loc[data.index < common_dates[final_start]]
+    development_evaluations = [
         evaluate_candidate(
-            data,
+            development_data,
             universe,
             candidate,
+            folds=folds - 1,
+            warmup=warmup,
+            cost_bps_per_side=cost_bps_per_side,
+        )
+        for candidate in candidates
+    ]
+    selected = {}
+    for style in STYLE_CONFIG:
+        ranked = sorted(
+            (row for row in development_evaluations if row["style"] == style),
+            key=lambda row: row["score"],
+            reverse=True,
+        )
+        if not ranked:
+            continue
+        viable = [row for row in ranked if _accept(row, gates)[0]]
+        if not viable:
+            winner = ranked[0]
+            winner["accepted"] = False
+            winner["reason"] = "no candidate passed development validation: " + _accept(winner, gates)[1]
+            selected[style] = winner
+            continue
+        winner = evaluate_candidate(
+            data,
+            universe,
+            {"style": style, "strategy": viable[0]["strategy"]},
             folds=folds,
             warmup=warmup,
             cost_bps_per_side=cost_bps_per_side,
         )
-        for candidate in (candidates or DEFAULT_CANDIDATES)
-    ]
-    selected = {}
-    for style in STYLE_CONFIG:
-        ranked = sorted((row for row in evaluations if row["style"] == style), key=lambda row: row["score"], reverse=True)
-        if not ranked:
-            continue
-        winner = ranked[0]
         winner["accepted"], winner["reason"] = _accept(winner, gates)
         selected[style] = winner
 
@@ -266,7 +297,7 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
         "universe": universe,
         "styles": styles,
         "entries": _latest_candidates(data, universe, selected),
-        "evaluated_candidates": len(evaluations),
+        "evaluated_candidates": len(development_evaluations),
     }
 
 

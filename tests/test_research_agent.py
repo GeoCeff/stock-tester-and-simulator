@@ -3,6 +3,7 @@ import pandas as pd
 
 import json
 
+import market_dashboard.modules.research_agent as research_agent
 from market_dashboard.modules.research_agent import publish_research_result, run_research_loop
 
 
@@ -36,3 +37,45 @@ def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
     pack = publish_research_result(result, model_pack_path=model_path, agent_result_path=agent_path)
     assert pack["styles"]["SWING_5D"]["strategy"] == "ma_crossover"
     assert json.loads(agent_path.read_text(encoding="utf-8"))["schema_version"] == 1
+
+
+def test_research_loop_requires_a_separate_final_holdout():
+    with np.testing.assert_raises_regex(ValueError, "at least four folds"):
+        run_research_loop(pd.DataFrame(), ["TEST"], folds=3)
+
+
+def test_research_loop_skips_high_score_candidate_that_fails_development_gates(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=360, freq="B")
+    data = pd.DataFrame({("Close", "TEST"): np.arange(360) + 100}, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    final_exposures = []
+
+    def fake_evaluate(frame, universe, candidate, **kwargs):
+        final_exposures.append(candidate["strategy"]) if len(frame) == len(data) else None
+        passing = candidate["strategy"] == "good"
+        metric = {
+            "trades": 100,
+            "win_rate": 0.6,
+            "expectancy": 0.01,
+            "profit_factor": 1.5,
+            "max_drawdown": -0.1 if passing else -0.2,
+            "total_return": 0.2,
+        }
+        development = {**metric, "positive_fold_ratio": 1.0}
+        return {**candidate, "development": development, "final": metric, "folds": [metric], "score": 5.0 if passing else 10.0}
+
+    monkeypatch.setattr(research_agent, "evaluate_candidate", fake_evaluate)
+    monkeypatch.setattr(research_agent, "_latest_candidates", lambda *args: [])
+    result = run_research_loop(
+        data,
+        ["TEST"],
+        candidates=[
+            {"style": "SWING_20D", "strategy": "bad"},
+            {"style": "SWING_20D", "strategy": "good"},
+        ],
+        folds=4,
+        warmup=200,
+    )
+
+    assert result["styles"]["SWING_20D"]["strategy"] == "good"
+    assert final_exposures == ["good"]
