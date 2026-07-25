@@ -4,7 +4,7 @@ import pandas as pd
 import json
 
 import market_dashboard.modules.research_agent as research_agent
-from market_dashboard.modules.research_agent import publish_research_result, run_research_loop
+from market_dashboard.modules.research_agent import publish_research_result, run_research_loop, update_paper_ledger
 
 
 def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
@@ -79,3 +79,39 @@ def test_research_loop_skips_high_score_candidate_that_fails_development_gates(m
 
     assert result["styles"]["SWING_20D"]["strategy"] == "good"
     assert final_exposures == ["good"]
+
+
+def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
+    dates = pd.date_range("2026-01-05", periods=2, freq="B")
+    data = pd.DataFrame({
+        ("Open", "TEST"): [100, 101],
+        ("High", "TEST"): [101, 106],
+        ("Low", "TEST"): [99, 98],
+        ("Close", "TEST"): [100, 103],
+    }, index=dates)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    result = {
+        "created_at": "2026-01-05T22:00:00Z",
+        "entries": [{
+            "symbol": "TEST",
+            "side": "LONG",
+            "style": "SWING_20D",
+            "strategy": "trend_momentum",
+            "signal_date": "2026-01-05",
+            "entry": 100,
+            "stop": 99,
+            "target": 105,
+            "max_hold": 20,
+            "status": "PENDING_NEWS_AND_LIVE_GATES",
+        }],
+    }
+    path = tmp_path / "paper.json"
+
+    assert update_paper_ledger(result, data.iloc[:1], path=path)["closed_trades"] == 0
+    summary = update_paper_ledger(result, data, path=path)
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+
+    assert summary["closed_trades"] == 1
+    assert ledger["closed"][0]["entry"] == 101
+    assert ledger["closed"][0]["exit_reason"] == "stop"
+    assert ledger["closed"][0]["return"] < 0

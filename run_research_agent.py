@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, load_market_data
-from market_dashboard.modules.research_agent import publish_research_result, run_research_loop
+from market_dashboard.modules.research_agent import publish_research_result, run_research_loop, update_paper_ledger
 
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,JPM,XOM,LLY,JNJ,PFE"
@@ -40,10 +40,12 @@ def run_once(args):
         warmup=args.warmup,
         cost_bps_per_side=args.cost_bps,
     )
+    result["paper_evidence"] = update_paper_ledger(result, data, cost_bps_per_side=args.cost_bps)
     publish_research_result(result)
     passed = [style for style, row in result["styles"].items() if row["acceptance"]["status"] == "pass"]
     print(f"{result['created_at']} evaluated {result['evaluated_candidates']} candidates from {status.get('source', 'market data')}")
     print(f"Passed styles: {', '.join(passed) if passed else 'none; execution remains blocked'}")
+    print(f"Paper evidence: {result['paper_evidence']['status']} ({result['paper_evidence']['closed_trades']} closed trades)")
     print(json.dumps(result["entries"], indent=2))
     return result
 

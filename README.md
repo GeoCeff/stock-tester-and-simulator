@@ -56,7 +56,10 @@ The agent:
 3. selects on development folds;
 4. validates the winner on one untouched final fold;
 5. publishes passing model settings and current entry/stop/target candidates;
-6. publishes a rejected result when nothing passes.
+6. advances a real-data forward paper ledger in `execution_dashboard/data/research_paper.json`;
+7. publishes a rejected result when nothing passes.
+
+Paper signals are filled at the next available market open and do not count as evidence until a later bar closes them by stop, target, or maximum hold. At least 30 closed trades in one style, positive cost-adjusted expectancy, profit factor of 1.2, and drawdown within 15% are required for the ledger to report that style as validated.
 
 The execution dashboard reloads the agent result and model pack whenever research refreshes. Only matching, fresh signals can pass its research-agent gate. While the dashboard is open, technical/news research refreshes hourly; unavailable news stays explicitly unavailable. News and every existing account, quote, model, learning, fee, and IBKR gate can still reduce or reject a setup.
 

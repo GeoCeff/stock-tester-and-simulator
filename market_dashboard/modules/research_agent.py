@@ -43,6 +43,9 @@ DEFAULT_GATES = {
 DEFAULT_AGENT_RESULT_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_agent.json"
 )
+DEFAULT_PAPER_LEDGER_PATH = (
+    Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_paper.json"
+)
 
 
 def _indicators(close):
@@ -222,6 +225,101 @@ def _latest_candidates(data, universe, selected):
                 "status": "PENDING_NEWS_AND_LIVE_GATES",
             })
     return rows
+
+
+def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
+    """Advance prior signals on real future bars, then queue today's new signals."""
+    path = Path(path or DEFAULT_PAPER_LEDGER_PATH)
+    if path.exists():
+        ledger = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            ledger.get("schema_version") != 1
+            or not isinstance(ledger.get("positions"), list)
+            or not isinstance(ledger.get("closed"), list)
+        ):
+            raise ValueError("invalid paper ledger")
+    else:
+        ledger = {"schema_version": 1, "positions": [], "closed": [], "cancelled": []}
+    ledger.setdefault("cancelled", [])
+
+    still_open = []
+    for position in ledger["positions"]:
+        frame = get_ticker_frame(data, position["symbol"])
+        future = frame.loc[frame.index > pd.Timestamp(position["signal_date"])].head(int(position["max_hold"]))
+        if future.empty:
+            still_open.append(position)
+            continue
+        if not position.get("entry_date"):
+            position["entry_date"] = str(future.index[0].date())
+            position["entry"] = float(future.iloc[0]["Open"])
+            if not position["stop"] < position["entry"] < position["target"]:
+                ledger["cancelled"].append({**position, "reason": "opening gap invalidated bracket"})
+                continue
+        exit_price = None
+        exit_reason = ""
+        exit_date = None
+        for date, bar in future.loc[future.index >= pd.Timestamp(position["entry_date"])].iterrows():
+            if float(bar["Low"]) <= position["stop"]:
+                exit_price, exit_reason = position["stop"], "stop"
+            elif float(bar["High"]) >= position["target"]:
+                exit_price, exit_reason = position["target"], "target"
+            elif date == future.index[-1] and len(future) >= position["max_hold"]:
+                exit_price, exit_reason = float(bar["Close"]), "time"
+            if exit_reason:
+                exit_date = str(date.date())
+                break
+        if not exit_reason:
+            still_open.append(position)
+            continue
+        gross_return = exit_price / position["entry"] - 1
+        ledger["closed"].append({
+            **position,
+            "exit": exit_price,
+            "exit_date": exit_date,
+            "exit_reason": exit_reason,
+            "return": gross_return - 2 * cost_bps_per_side / 10_000,
+        })
+
+    existing = {
+        (row["symbol"], row["style"], row["signal_date"])
+        for row in [*still_open, *ledger["closed"]]
+    }
+    for entry in result["entries"]:
+        key = (entry["symbol"], entry["style"], entry["signal_date"])
+        if key not in existing:
+            still_open.append({**entry, "entry": None, "entry_date": None})
+    ledger["positions"] = still_open
+
+    by_style = {}
+    for style in STYLE_CONFIG:
+        rows = [row for row in ledger["closed"] if row["style"] == style]
+        returns = np.asarray([row["return"] for row in rows], dtype=float)
+        wins = returns[returns > 0]
+        losses = returns[returns < 0]
+        equity = pd.Series((1 + returns).cumprod())
+        max_drawdown = float((equity / equity.cummax() - 1).min()) if not equity.empty else 0.0
+        profit_factor = float(wins.sum() / abs(losses.sum())) if losses.size else (999.0 if wins.size else 0.0)
+        expectancy = float(returns.mean()) if returns.size else 0.0
+        by_style[style] = {
+            "status": "validated" if len(rows) >= 30 and expectancy >= 0.001 and profit_factor >= 1.2 and max_drawdown >= -0.15 else "warming_up",
+            "closed_trades": len(rows),
+            "expectancy": expectancy,
+            "profit_factor": profit_factor,
+            "max_drawdown": max_drawdown,
+        }
+    validated_styles = [style for style, summary in by_style.items() if summary["status"] == "validated"]
+    ledger["summary"] = {
+        "status": "validated" if validated_styles else "warming_up",
+        "closed_trades": len(ledger["closed"]),
+        "validated_styles": validated_styles,
+        "by_style": by_style,
+    }
+    ledger["updated_at"] = result["created_at"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps(ledger, indent=2, sort_keys=True), encoding="utf-8")
+    temporary.replace(path)
+    return ledger["summary"]
 
 
 def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, cost_bps_per_side=10, gates=None):
