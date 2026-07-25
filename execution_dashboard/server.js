@@ -22,6 +22,18 @@ const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.co
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+const NEWS_TERMS = {
+  AAPL: ["Apple"],
+  MSFT: ["Microsoft"],
+  NVDA: ["Nvidia"],
+  AMZN: ["Amazon"],
+  GOOGL: ["Google", "Alphabet"],
+  JPM: ["JPMorgan", "JP Morgan"],
+  XOM: ["Exxon", "ExxonMobil"],
+  LLY: ["Eli Lilly"],
+  JNJ: ["Johnson & Johnson", "J&J"],
+  PFE: ["Pfizer"]
+};
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -218,13 +230,26 @@ function parseRssItems(xml, limit = 3) {
   }).filter((item) => item.title);
 }
 
+function filterRelevantNews(symbol, items, now = Date.now()) {
+  const terms = [symbol, ...(NEWS_TERMS[symbol] || [])];
+  return items.filter((item) => {
+    const published = Date.parse(item.published_at || "");
+    if (!Number.isFinite(published) || published > now + 300000 || now - published > 3 * 86400000) return false;
+    return terms.some((term) => new RegExp(`(^|[^A-Z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Z0-9]|$)`, "i").test(item.title));
+  }).slice(0, 3);
+}
+
 async function fetchNews(symbol) {
   if (NEWS_DISABLED) return { status: "news_unavailable", items: [], error: "news fetch disabled" };
   try {
     const url = NEWS_RSS_URL.replace(/\{symbol\}/g, encodeURIComponent(symbol));
     const xml = await fetchText(url);
-    const items = parseRssItems(xml);
-    return { status: items.length ? "ok" : "news_unavailable", items, error: "" };
+    const items = filterRelevantNews(symbol, parseRssItems(xml, 20));
+    return {
+      status: items.length ? "ok" : "news_unavailable",
+      items,
+      error: items.length ? "" : "no recent symbol-relevant headlines"
+    };
   } catch (error) {
     return { status: "news_unavailable", items: [], error: error.message };
   }
@@ -823,4 +848,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, parseRssItems, newsSentiment, mergeNews, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
