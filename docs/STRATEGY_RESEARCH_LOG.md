@@ -34,3 +34,14 @@ Reference: [Volatility Managed Portfolios](https://www.nber.org/papers/w22208) s
 Decision: discard the cross-sectional candidate, preserve the outer holdout, and spend the next trial on a distinct hypothesis rather than parameter-tuning this one.
 
 Reference: [Momentum Strategies](https://www.nber.org/papers/w5375) supports cross-sectional winner selection, but the exact tradable implementation failed this system's development gates.
+
+## 2026-07-25 — 52-week-high proximity
+
+- Hypothesis: hold a stock for 20 trading days when its prior close is at least 95% of its trailing 252-day high.
+- Development-only result: 774 trades, 0.4504% expectancy, 1.018 worst-fold profit factor, -9.29% drawdown, and all folds positive.
+- Internal validation: 320 trades, 0.4888% expectancy, and 1.268 profit factor.
+- Failed before bracket replay and outer holdout because the development profit factor remained below 1.20.
+
+Decision: discard the implementation and do not tune the proximity threshold against these results.
+
+Reference: [The 52-Week High and Momentum Investing](https://onlinelibrary.wiley.com/doi/10.1111/j.1540-6261.2004.00695.x) supports cross-sectional ranking by nearness to the high; it does not validate this simpler fixed-threshold adaptation.
