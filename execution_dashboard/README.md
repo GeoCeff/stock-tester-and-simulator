@@ -5,7 +5,7 @@
 Safe mode, no real trades:
 
 ```powershell
-cd "D:\Code\Projects\Stock Performance Analyzer"
+cd execution_dashboard
 .\start_dashboard.ps1
 ```
 

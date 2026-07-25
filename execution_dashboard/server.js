@@ -36,6 +36,7 @@ const ORDER_TYPES = new Set(["LMT", "MKT", "STP", "STOP", "STP LMT", "STOP_LIMIT
 const LIMIT_ORDER_TYPES = new Set(["LMT", "STP LMT", "STOP_LIMIT"]);
 const STOP_ORDER_TYPES = new Set(["STP", "STOP", "STP LMT", "STOP_LIMIT"]);
 const TIFS = new Set(["DAY", "GTC", "IOC"]);
+const MODEL_PACK_STYLES = new Set(["DAY_TRADE", "OVERNIGHT_1D", "SWING_5D", "SWING_20D"]);
 
 function send(res, status, body, type = "application/json; charset=utf-8") {
   res.writeHead(status, {
@@ -388,6 +389,57 @@ function validateAutoOrder(body) {
   return { ok: true };
 }
 
+function validateModelPack(pack) {
+  if (!pack || typeof pack !== "object" || Array.isArray(pack)) return { ok: false, error: "model pack object required" };
+  if (Number(pack.schema_version ?? pack.schemaVersion) !== 1) return { ok: false, error: "unsupported model pack schema" };
+  if (!String(pack.model_version || pack.modelVersion || "").trim()) return { ok: false, error: "model_version required" };
+  const createdAt = Date.parse(pack.created_at || pack.createdAt || "");
+  if (!Number.isFinite(createdAt) || createdAt > Date.now() + 300000) return { ok: false, error: "valid created_at required" };
+  if (!pack.styles || typeof pack.styles !== "object" || Array.isArray(pack.styles)) return { ok: false, error: "styles object required" };
+
+  const unknownStyles = Object.keys(pack.styles).filter((style) => !MODEL_PACK_STYLES.has(style));
+  if (unknownStyles.length) return { ok: false, error: `unsupported style: ${unknownStyles[0]}` };
+
+  const fields = [
+    ["holdingPeriod", "holding_period", 0, 252],
+    ["minProb", "min_probability", 0, 1],
+    ["stopAtr", "stop_atr", 0, 20],
+    ["targetR", "target_r", 0, 20],
+    ["riskPct", "risk_pct", 0, 0.1]
+  ];
+  for (const style of MODEL_PACK_STYLES) {
+    const row = pack.styles[style];
+    if (!row || typeof row !== "object" || Array.isArray(row)) return { ok: false, error: `${style} config required` };
+    if (typeof row.enabled !== "boolean") return { ok: false, error: `${style}.enabled must be boolean` };
+    const status = String(row.acceptance?.status || "").toLowerCase();
+    if (!["pass", "reject"].includes(status)) return { ok: false, error: `${style}.acceptance.status must be pass or reject` };
+    for (const [camel, snake, min, max] of fields) {
+      const value = Number(row[camel] ?? row[snake]);
+      if (!Number.isFinite(value) || value < min || value > max) return { ok: false, error: `${style}.${snake} out of range` };
+      if (snake === "holding_period" && !Number.isInteger(value)) return { ok: false, error: `${style}.holding_period must be an integer` };
+      if (row.enabled && ["stop_atr", "target_r", "risk_pct"].includes(snake) && value === 0) {
+        return { ok: false, error: `${style}.${snake} must be positive when enabled` };
+      }
+    }
+  }
+
+  const overrides = pack.symbol_overrides ?? pack.symbolOverrides ?? {};
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return { ok: false, error: "symbol_overrides must be an object" };
+  for (const [symbol, override] of Object.entries(overrides)) {
+    if (!/^[A-Z0-9.-]{1,12}$/.test(symbol) || !override || typeof override !== "object" || Array.isArray(override)) {
+      return { ok: false, error: `invalid symbol override: ${symbol}` };
+    }
+    const weight = override.maxPositionWeight ?? override.max_position_weight;
+    if (weight !== undefined && (!Number.isFinite(Number(weight)) || Number(weight) < 0 || Number(weight) > 0.1)) {
+      return { ok: false, error: `${symbol}.max_position_weight out of range` };
+    }
+    for (const flag of ["blocked", "enabled"]) {
+      if (override[flag] !== undefined && typeof override[flag] !== "boolean") return { ok: false, error: `${symbol}.${flag} must be boolean` };
+    }
+  }
+  return { ok: true };
+}
+
 function ibkrRequest(method, endpoint, body) {
   return new Promise((resolve) => {
     const target = new URL(`${IBKR_BASE.replace(/\/$/, "")}/${endpoint.replace(/^\//, "")}`);
@@ -540,12 +592,15 @@ async function handleApi(req, res, url) {
     return send(res, 200, { ok: true, event: appendAudit(body) });
   }
   if (url.pathname === "/api/model-pack" && req.method === "GET") {
-    const modelPack = readJsonFile(MODEL_PACK_FILE, null);
-    return send(res, 200, { ok: true, exists: Boolean(modelPack), modelPack });
+    const stored = readJsonFile(MODEL_PACK_FILE, null);
+    const validation = stored ? validateModelPack(stored) : { ok: false, error: "model pack not found" };
+    return send(res, 200, { ok: true, exists: validation.ok, modelPack: validation.ok ? stored : null, error: stored && !validation.ok ? validation.error : undefined });
   }
   if (url.pathname === "/api/model-pack" && req.method === "POST") {
     const body = await readJson(req);
     const modelPack = body.modelPack || body;
+    const validation = validateModelPack(modelPack);
+    if (!validation.ok) return send(res, 400, validation);
     writeJsonFile(MODEL_PACK_FILE, modelPack);
     appendAudit({ type: "model_pack_write", source: "dashboard", modelVersion: modelPack.model_version || modelPack.modelVersion || "" });
     return send(res, 200, { ok: true, modelPack });
@@ -695,4 +750,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { validateLiveOrders, validateAutoOrder, parseRssItems, newsSentiment, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { validateLiveOrders, validateAutoOrder, validateModelPack, parseRssItems, newsSentiment, executionHistory, ibkrDiagnosis, ibkrStatusConnected };

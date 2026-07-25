@@ -1,76 +1,89 @@
-# Stock Backtester
+# Stock Research and Execution Workstation
 
-Version `1.2.0`
+A single repository for market research, strategy backtesting, paper trading, and guarded IBKR execution.
 
-A Streamlit market analytics workstation for downloading market data, comparing tickers, running strategy backtests, testing safe Quant Lab strategy snippets, and practicing manual trades in a paper-trading simulator.
+This project is for education and research. It is not financial advice. Live trading is disabled unless you deliberately start a live mode and every execution safety gate passes.
 
-This project is for education and research. It is not financial advice and does not place live trades.
+## Applications
+
+- `market_dashboard/` — Python/Streamlit research lab for market data, indicators, backtests, Quant Lab strategies, portfolio risk, and paper simulation.
+- `execution_dashboard/` — dependency-free Node dashboard for live quotes, model/research gates, IBKR synchronization, order planning, audits, and deliberately armed execution.
+
+The applications share `execution_dashboard/data/bot_model_pack.json`. The backtester writes validated strategy settings; the execution dashboard validates and reads them. Malformed, stale, disabled, or rejected model packs cannot approve an order.
 
 ## Quick Start
 
-1. Clone the repository:
-   ```powershell
-   git clone https://github.com/GeoCeff/Stock-Tester-and-Simulator.git
-   cd Stock-Tester-and-Simulator
+Requirements:
+
+- Python with the packages in `requirements.txt`
+- Node.js
+- Windows PowerShell
+
+```powershell
+git clone https://github.com/GeoCeff/stock-tester-and-simulator.git
+cd stock-tester-and-simulator
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\start_all.ps1
+```
+
+The research lab opens at `http://127.0.0.1:8501`; the execution dashboard opens at `http://127.0.0.1:8787`.
+
+Stop both:
+
+```powershell
+.\stop_all.ps1
+```
+
+## Research-to-Execution Flow
+
+1. Research and backtest in Streamlit.
+2. Accept only results that passed the required validation.
+3. Build and write the shared model pack:
+
+   ```python
+   from market_dashboard.modules.bot_model_pack import build_model_pack, write_model_pack
+
+   pack = build_model_pack(validated_results, universe)
+   write_model_pack(pack)
    ```
 
-2. Install dependencies:
-   ```powershell
-   python -m pip install -r requirements.txt
-   ```
+4. Open the execution dashboard. It automatically loads the shared pack.
+5. Paper trade first. Live orders remain behind server flags, IBKR authentication, account limits, quote freshness, model/research gates, and explicit confirmation.
 
-3. Launch the dashboard:
-   ```powershell
-   streamlit run market_dashboard/dashboard.py
-   ```
+`write_model_pack(pack)` defaults to the correct monorepo location. Pass a path only when exporting elsewhere.
 
-The app opens at `http://localhost:8501`.
+## Run Applications Separately
 
-## Features
+Research lab:
 
-- Broker-style dashboard with top bar, watchlist, quote header, compact analytics, and dark/light themes
-- Market data from `Auto`, `Yahoo Finance`, `Stooq` daily data, or deterministic demo data
-- Common chart indicators with quick `Common`, `All`, and `Off` toggles
-- Guided tutorial workflow and optional learning scenarios for newer investors
-- Backtests for moving-average crossover, RSI, and Bollinger Band strategies
-- Expert-mode Quant Lab with built-in templates and safe custom `strategy(data)` signal code
-- Strategy comparison against buy-and-hold and optional benchmarks
-- Paper-trading simulator with order previews, positions, equity, cash, exposure, and trade journal
-- Portfolio and risk views with Sharpe ratio, drawdown, VaR, CVaR, rolling risk, and monthly returns
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run market_dashboard\dashboard.py
+```
 
-## Quant Lab Safety
+Safe execution dashboard:
 
-Quant Lab is designed for signal generation, not unrestricted code execution. Custom strategies must define one `strategy(data)` function and return buy/sell signals or a position series. The sandbox blocks imports, filesystem access, network/subprocess access, environment access, reflection helpers, and pandas write methods before execution. Strategy code also runs with a timeout and row limits.
+```powershell
+cd execution_dashboard
+.\start_dashboard.ps1
+```
+
+See [execution_dashboard/README.md](execution_dashboard/README.md) for IBKR, live-confirm, full-auto, and AI-research modes.
+
+## Checks
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+node execution_dashboard\self_check.js
+```
 
 ## Project Structure
 
-- `market_dashboard/dashboard.py` - main Streamlit app
-- `market_dashboard/modules/` - data loading, indicators, backtests, simulator, Quant Lab, portfolio, and search helpers
-- `market_dashboard/ui/` - shared theme and broker-style UI components
-- `tests/` - pytest coverage for data, simulator, search, strategies, and Quant Lab
-- `docs/` - implementation plans, roadmap notes, and archived legacy documents
-- `CHANGELOG.md` - release notes
-- `SECURITY.md` - security and vulnerability reporting policy
-
-## Tests
-
-Run the local test suite:
-
-```powershell
-python -m pytest
-```
-
-The test suite is configured to collect only files under `tests/` so archived scripts and old notes do not affect public CI runs.
-
-## Data Sources
-
-The default `Auto` source tries Yahoo Finance first. For daily candles, Auto can fall back to Stooq before using deterministic demo data. Demo data keeps the app usable offline or during provider outages and is always labeled as illustrative.
-
-## Documentation
-
-- [Quant Lab and Broker UI plan](docs/QUANT_LAB_AND_BROKER_UI_PLAN.md)
-- [Next-level roadmap](docs/NEXT_LEVEL_ROADMAP.md)
-- [App improvement plan](docs/APP_IMPROVEMENT_PLAN.md)
+- `market_dashboard/modules/` — data loading, indicators, strategies, backtests, simulator, Quant Lab, portfolio, and model-pack export
+- `market_dashboard/ui/` — shared Streamlit theme and components
+- `execution_dashboard/` — live dashboard, local API, IBKR bridge, operator scripts, and Node self-check
+- `tests/` — Python test suite
+- `docs/` — research-app implementation notes and archived documents
 
 ## License
 

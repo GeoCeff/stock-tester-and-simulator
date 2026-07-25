@@ -1,6 +1,6 @@
 const assert = require("assert");
 const app = require("./app.js");
-const { validateLiveOrders, validateAutoOrder, parseRssItems, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { validateLiveOrders, validateAutoOrder, validateModelPack, parseRssItems, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -46,6 +46,15 @@ assert.equal(validateLiveOrders([{ conid: 0, side: "BUY", orderType: "LMT", pric
 assert.equal(validateLiveOrders([{ conid: 265598, side: "BUY", orderType: "STOP_LIMIT", price: 192.25, quantity: 3, tif: "DAY" }]).ok, false);
 assert.equal(validateLiveOrders([{ conid: 265598, side: "BUY", orderType: "STOP_LIMIT", price: 192.25, auxPrice: 191.75, quantity: 3, tif: "DAY" }]).ok, true);
 assert.equal(validateAutoOrder({ auto: true }).ok, process.env.ENABLE_FULL_AUTO === "1");
+const modelStyle = { enabled: false, holding_period: 0, min_probability: 0, stop_atr: 0, target_r: 0, risk_pct: 0, acceptance: { status: "reject" } };
+const modelPack = {
+  schema_version: 1,
+  created_at: "2026-06-21T00:00:00Z",
+  model_version: "self-check",
+  styles: Object.fromEntries(["DAY_TRADE", "OVERNIGHT_1D", "SWING_5D", "SWING_20D"].map((style) => [style, { ...modelStyle }]))
+};
+assert.equal(validateModelPack(modelPack).ok, true);
+assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SWING_5D: { ...modelStyle, enabled: true, risk_pct: 2 } } }).ok, false);
 assert.equal(parseRssItems("<rss><channel><item><title>AAPL shares rise</title><link>https://example.com</link><pubDate>today</pubDate></item></channel></rss>")[0].sentiment, "positive");
 assert.equal(ibkrStatusConnected({ ok: true, data: { authenticated: true, connected: true, competing: false } }), true);
 assert.equal(ibkrStatusConnected({ ok: true, data: { authenticated: false, connected: true, competing: false } }), false);

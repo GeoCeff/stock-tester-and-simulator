@@ -5,7 +5,7 @@ Use this when you want Codex to participate manually without OpenAI API automati
 ## Start
 
 ```powershell
-cd "D:\Code\Projects\Stock Performance Analyzer"
+cd execution_dashboard
 .\start_manual_codex_session.ps1
 ```
 

@@ -33,7 +33,7 @@ def _style_result(results, style):
 
 
 def build_model_pack(results, universe, created_at=None):
-    """Build the JSON artifact consumed by Stock Performance Analyzer."""
+    """Build the JSON artifact consumed by the execution dashboard."""
     if hasattr(results, "keys"):
         unknown = set(results.keys()) - set(DASHBOARD_STYLES)
         if unknown:
