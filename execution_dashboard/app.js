@@ -212,6 +212,11 @@
     if (ageMs(agentCreatedAt) > RESEARCH_AGENT_MAX_AGE_DAYS * 86400000) return "reject";
     const candidate = researchAgentCandidate(metric.symbol, style);
     if (!candidate) return "reject";
+    if (
+      state.researchAgent.paper_evidence?.status !== "validated"
+      || !state.researchAgent.paper_evidence?.validated_plans?.includes(candidate.plan_id)
+      || candidate.news_action !== "pass"
+    ) return "reject";
     return Math.abs(metric.price - candidate.entry) / candidate.entry <= 0.03 ? "pass" : "reject";
   }
 
@@ -772,11 +777,12 @@
     const styleMultiplier = stats.trades >= ACCOUNT.minTradesToValidate && stats.expectancy > ACCOUNT.minExpectancy ? 1 : 0.5;
     const streakMultiplier = recentLosses >= ACCOUNT.maxConsecutiveLosses ? 0.35 : 1;
     const reduction = (gateStatus === "REDUCE" ? 0.5 : 1) * styleMultiplier * streakMultiplier * learning.multiplier;
-    const entry = metric.price;
-    const agentStopDistance = agentCandidate ? agentCandidate.entry - agentCandidate.stop : 0;
-    const stopDistance = Math.max(agentStopDistance, metric.atr * config.stopAtr, metric.price * 0.004);
-    const stop = entry - stopDistance;
-    const target = entry + stopDistance * config.targetR;
+    const entry = agentCandidate ? Number(agentCandidate.entry) : metric.price;
+    const stopDistance = agentCandidate
+      ? entry - Number(agentCandidate.stop)
+      : Math.max(metric.atr * config.stopAtr, metric.price * 0.004);
+    const stop = agentCandidate ? Number(agentCandidate.stop) : entry - stopDistance;
+    const target = agentCandidate ? Number(agentCandidate.target) : entry + stopDistance * config.targetR;
     const riskDollars = ACCOUNT.equity * config.riskPct * reduction;
     const rawShares = Math.floor(riskDollars / stopDistance);
     const maxValueShares = Math.floor((ACCOUNT.equity * config.maxPositionWeight) / entry);
@@ -2546,7 +2552,16 @@
     }
     try {
       const orders = ibkrLiveOrders(setup);
-      const result = await apiPost("/api/ibkr/live-order", { accountId: state.ibkr.accountId, setupId: setup.id, orders, auto });
+      const candidate = researchAgentCandidate(setup.symbol, setup.style);
+      const result = await apiPost("/api/ibkr/live-order", {
+        accountId: state.ibkr.accountId,
+        setupId: setup.id,
+        symbol: setup.symbol,
+        style: setup.style,
+        planId: candidate?.plan_id || "",
+        orders,
+        auto
+      });
       state.orders.unshift({
         id: `${auto ? "AUTO" : "LIVE"}-${Date.now()}`,
         time: new Date().toLocaleTimeString(),
