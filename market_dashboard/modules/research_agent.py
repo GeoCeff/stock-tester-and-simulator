@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +58,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
 )
 ENTRY_VALID_BARS = 3
 EXECUTION_PLAN_VERSION = "daily-bars-v2"
+HOLDOUT_COOLDOWN_DAYS = 90
 
 
 def _indicators(close):
@@ -594,7 +595,17 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
     return ledger["summary"]
 
 
-def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, cost_bps_per_side=10, gates=None):
+def run_research_loop(
+    data,
+    universe,
+    *,
+    candidates=None,
+    folds=4,
+    warmup=200,
+    cost_bps_per_side=10,
+    gates=None,
+    excluded_holdout_trials=None,
+):
     """Select on development data, then expose only each winner to the final holdout."""
     universe = [str(symbol).strip().upper() for symbol in universe if str(symbol).strip()]
     if not universe:
@@ -603,6 +614,7 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
         raise ValueError("at least four folds required to preserve a final holdout")
     gates = {**DEFAULT_GATES, **(gates or {})}
     candidates = candidates or DEFAULT_CANDIDATES
+    excluded_holdout_trials = set(excluded_holdout_trials or ())
     usable_length = _common_length(data, universe)
     final_start = _folds(usable_length, folds, warmup)[-1][0]
     common_dates = get_ticker_frame(data, universe[0]).dropna(subset=["Close"]).index[-usable_length:]
@@ -691,7 +703,19 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
             selected[style] = winner
             continue
         executable.sort(key=lambda row: row["execution_score"], reverse=True)
-        selection_winner = executable[0]
+        eligible = [
+            row
+            for row in executable
+            if (style, row["strategy"]) not in excluded_holdout_trials
+        ]
+        if not eligible:
+            winner = executable[0]
+            winner["accepted"] = False
+            winner["exposed_to_final"] = False
+            winner["reason"] = "recent rejected candidates remain in holdout cooldown"
+            selected[style] = winner
+            continue
+        selection_winner = eligible[0]
         winner = evaluate_candidate(
             data,
             universe,
@@ -774,9 +798,32 @@ def run_research_loop(data, universe, *, candidates=None, folds=4, warmup=200, c
                 "unselected candidates were not exposed to the final holdout",
                 "development-only validation folds are labeled separately from the final holdout",
                 "selection ranks plans by executable development evidence, not signal score alone",
+                "recently rejected rules are not repeatedly exposed to the same rolling holdout",
             ],
         },
     }
+
+
+def recent_rejected_holdout_trials(*, path=None, now=None, cooldown_days=HOLDOUT_COOLDOWN_DAYS):
+    """Return rejected strategy names still inside their next holdout trial cooldown."""
+    path = Path(path or DEFAULT_RESEARCH_HISTORY_PATH)
+    if not path.exists():
+        return set()
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=cooldown_days)
+    trials = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        created_at = datetime.fromisoformat(record["created_at"].replace("Z", "+00:00"))
+        if created_at < cutoff:
+            continue
+        for style, row in record.get("styles", {}).items():
+            # ponytail: strategy names are trial IDs; use a new name for materially changed rules.
+            if row.get("holdout_exposed") and row.get("status") == "reject":
+                trials.add((style, row.get("strategy", "")))
+    return trials
 
 
 def append_research_history(result, *, path=None, max_records=200):

@@ -23,3 +23,14 @@ Reference: [Time Series Momentum](https://papers.ssrn.com/sol3/papers.cfm?abstra
 Decision: retain the disabled candidate for pre-scheduled future evaluation, publish no entry, and do not tune the volatility threshold or universe against this holdout.
 
 Reference: [Volatility Managed Portfolios](https://www.nber.org/papers/w22208) supports reducing exposure in high-volatility states, but the binary stock-level filter here remains an independently tested implementation.
+
+## 2026-07-25 — Cross-sectional momentum and holdout reuse
+
+- Hypothesis: trade only the top quartile of 12-minus-1-month relative momentum among the fixed universe, with positive absolute momentum and a 200-day trend filter.
+- Development-only signal result: 428 trades, 1.5715% expectancy, 1.411 worst-fold profit factor, and all folds positive.
+- Failed before outer holdout: the exact bracket plan had a 1.145 worst-fold profit factor and only 50% positive symbols in internal validation. The unused implementation was removed.
+- Process mistake corrected: a rejected rule could previously be exposed to substantially the same rolling holdout on every daily run. Rejected strategy names now receive a fixed 90-day holdout cooldown; materially changed rules require a new strategy name.
+
+Decision: discard the cross-sectional candidate, preserve the outer holdout, and spend the next trial on a distinct hypothesis rather than parameter-tuning this one.
+
+Reference: [Momentum Strategies](https://www.nber.org/papers/w5375) supports cross-sectional winner selection, but the exact tradable implementation failed this system's development gates.

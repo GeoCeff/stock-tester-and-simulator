@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, load_market_data
-from market_dashboard.modules.research_agent import append_research_history, publish_research_result, run_research_loop, update_paper_ledger
+from market_dashboard.modules.research_agent import append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
 
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
@@ -111,6 +111,7 @@ def run_once(args):
         folds=args.folds,
         warmup=args.warmup,
         cost_bps_per_side=args.cost_bps,
+        excluded_holdout_trials=recent_rejected_holdout_trials(),
     )
     publish_research_result(result)
     news_status = refresh_news()

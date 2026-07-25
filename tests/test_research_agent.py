@@ -5,7 +5,7 @@ import json
 
 import market_dashboard.modules.research_agent as research_agent
 import run_research_agent as research_runner
-from market_dashboard.modules.research_agent import append_research_history, publish_research_result, run_research_loop, update_paper_ledger
+from market_dashboard.modules.research_agent import append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
 
 
 def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
@@ -213,6 +213,22 @@ def test_research_loop_selects_best_executable_plan_not_best_signal_score(monkey
     assert final_exposures == ["plan_best"]
     assert next(row for row in result["development_diagnostics"] if row["strategy"] == "plan_best")["selected"]
 
+    final_exposures.clear()
+    result = run_research_loop(
+        data,
+        ["TEST"],
+        candidates=[
+            {"style": "SWING_20D", "strategy": "signal_best"},
+            {"style": "SWING_20D", "strategy": "plan_best"},
+        ],
+        folds=4,
+        warmup=200,
+        excluded_holdout_trials={("SWING_20D", "plan_best")},
+    )
+
+    assert result["styles"]["SWING_20D"]["strategy"] == "signal_best"
+    assert final_exposures == ["signal_best"]
+
 
 def test_development_reject_does_not_masquerade_as_final_holdout(monkeypatch):
     index = pd.date_range("2024-01-01", periods=360, freq="B")
@@ -267,6 +283,44 @@ def test_research_history_is_deduplicated_and_bounded(tmp_path):
 
     assert [row["created_at"] for row in records] == ["2026-07-26T00:00:00Z", "2026-07-27T00:00:00Z"]
     assert records[-1]["styles"]["SWING_20D"]["holdout_exposed"] is True
+
+
+def test_recent_rejected_holdout_trials_ignores_passes_and_expired_trials(tmp_path):
+    path = tmp_path / "history.jsonl"
+    path.write_text("\n".join([
+        json.dumps({
+            "created_at": "2026-07-20T00:00:00Z",
+            "styles": {
+                "SWING_20D": {
+                    "strategy": "recent_reject",
+                    "status": "reject",
+                    "holdout_exposed": True,
+                },
+                "SWING_5D": {
+                    "strategy": "active_pass",
+                    "status": "pass",
+                    "holdout_exposed": True,
+                },
+            },
+        }),
+        json.dumps({
+            "created_at": "2026-01-01T00:00:00Z",
+            "styles": {
+                "OVERNIGHT_1D": {
+                    "strategy": "old_reject",
+                    "status": "reject",
+                    "holdout_exposed": True,
+                },
+            },
+        }),
+    ]) + "\n", encoding="utf-8")
+
+    trials = recent_rejected_holdout_trials(
+        path=path,
+        now=pd.Timestamp("2026-07-25", tz="UTC").to_pydatetime(),
+    )
+
+    assert trials == {("SWING_20D", "recent_reject")}
 
 
 def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
