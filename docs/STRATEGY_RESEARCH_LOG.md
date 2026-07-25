@@ -183,3 +183,14 @@ Reference: [Dark Side of the Day: Overnight Price Jumps and Short-Term Return Pr
 - Research-history records persist the family used at trial time, so later mapping changes cannot silently reinterpret prior holdout evidence.
 
 Decision: future candidate integrations are incomplete unless their family classification is explicit and tested.
+
+## 2026-07-26 — Pre-FOMC announcement drift
+
+- Hypothesis: buy at the close immediately before the second day of each regularly scheduled FOMC meeting and hold for one trading day. Meeting dates came from Federal Reserve calendars; cancelled meetings, unscheduled meetings, and notation votes were excluded. No price threshold or date window was fitted.
+- Development-only 20-stock result: 660 trades, 0.1633% expectancy, 1.057 worst-fold profit factor, -6.19% drawdown, and all three development folds positive. Internal validation reversed to 240 trades, -0.1751% expectancy, and a 0.802 profit factor.
+- Development-only SPY result using the same fixed rule: 33 trades, 0.0444% expectancy, 0.857 worst-fold profit factor, -7.47% drawdown, and 67% positive folds. Internal validation produced 12 trades, -0.2009% expectancy, and a 0.691 profit factor.
+- Failed before bracket replay and outer holdout on expectancy, profit-factor, and fold-consistency gates. The final holdout beginning 2025-02-13 was not exposed.
+
+Decision: discard the implementation and do not try alternate meeting subsets, holding windows, or announcement-day thresholds. The published anomaly did not persist in this recent daily-bar sample after costs.
+
+References: [Federal Reserve meeting calendars for 2021–2027](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm), [2018 historical meetings](https://www.federalreserve.gov/monetarypolicy/fomchistorical2018.htm), [2019 historical meetings](https://www.federalreserve.gov/monetarypolicy/fomchistorical2019.htm), [2020 historical meetings](https://www.federalreserve.gov/monetarypolicy/fomchistorical2020.htm), and the New York Fed staff report [The Pre-FOMC Announcement Drift](https://www.newyorkfed.org/research/staff_reports/sr512.html).
