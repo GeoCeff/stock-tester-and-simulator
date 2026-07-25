@@ -194,3 +194,24 @@ Decision: future candidate integrations are incomplete unless their family class
 Decision: discard the implementation and do not try alternate meeting subsets, holding windows, or announcement-day thresholds. The published anomaly did not persist in this recent daily-bar sample after costs.
 
 References: [Federal Reserve meeting calendars for 2021–2027](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm), [2018 historical meetings](https://www.federalreserve.gov/monetarypolicy/fomchistorical2018.htm), [2019 historical meetings](https://www.federalreserve.gov/monetarypolicy/fomchistorical2019.htm), [2020 historical meetings](https://www.federalreserve.gov/monetarypolicy/fomchistorical2020.htm), and the New York Fed staff report [The Pre-FOMC Announcement Drift](https://www.newyorkfed.org/research/staff_reports/sr512.html).
+
+## 2026-07-26 — Earnings-event source rejection
+
+- Proposed family: post-earnings announcement drift using official Form 8-K Item 2.02 events.
+- The SEC Submissions API is the appropriate point-in-time source, but automated requests from the current environment were rate-blocked before universe coverage could be validated.
+- Rejected alternatives: unofficial reconstructed earnings calendars and current fundamentals mapped backward. Either could introduce missing-event or hindsight bias.
+
+Decision: do not prototype or backtest the earnings-event family until the official SEC feed or a complete timestamped export is reliably available.
+
+Reference: [SEC EDGAR APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces) documents the real-time submissions history, and [Form 8-K](https://www.sec.gov/about/forms/form8-k.pdf) defines Item 2.02.
+
+## 2026-07-26 — Monthly low-beta selection
+
+- Hypothesis: on the first trading session of each month, select the bottom five of the 20-stock universe by trailing 126-session beta to SPY, enter after that close, and hold for 20 sessions. The beta window, bottom quartile, monthly cadence, and holding period were fixed before evaluation.
+- Development-only result: 302 trades, 0.8827% expectancy, 1.190 worst-fold profit factor, -4.52% drawdown, and all three development folds positive.
+- Internal validation produced 118 trades, 0.5838% expectancy, a 1.418 profit factor, and -2.00% drawdown.
+- Failed before bracket replay and outer holdout because the worst development-fold profit factor was below the predeclared 1.20 gate. The final holdout beginning 2025-02-13 was not exposed.
+
+Decision: retain the result as a promising disabled research candidate, but do not round the profit factor, lower the gate, or try nearby beta windows after seeing this miss. Re-evaluate only after materially new data accumulates or within a separately registered experiment.
+
+Reference: [Betting Against Beta](https://www.nber.org/papers/w16601) supports beta-sorted defensive equity portfolios; it does not validate this long-only monthly implementation.
