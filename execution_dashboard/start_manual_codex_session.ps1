@@ -11,8 +11,9 @@ if (!$existing) {
 $health = Invoke-RestMethod -Uri "$url/api/health" -TimeoutSec 5
 Start-Process $url
 
+$runbook = Join-Path $PSScriptRoot "MANUAL_CODEX_OPERATOR.md"
 $prompt = @"
-Open D:\Code\Projects\Stock Performance Analyzer\MANUAL_CODEX_OPERATOR.md.
+Open $runbook.
 Use the dashboard at $url.
 Manual Codex mode only: do not add API-key automation, do not weaken live-order/full-auto safety gates, and do not place or transmit orders for me.
 Help me operate the dashboard live: inspect the current bot pick, model/research status, quote freshness, technicals, news/trends when I ask, and give pass/reduce/reject guidance with reasons.

@@ -3,7 +3,12 @@ import math
 
 import pytest
 
-from market_dashboard.modules.bot_model_pack import DASHBOARD_STYLES, build_model_pack, write_model_pack
+from market_dashboard.modules.bot_model_pack import (
+    DASHBOARD_STYLES,
+    DEFAULT_MODEL_PACK_PATH,
+    build_model_pack,
+    write_model_pack,
+)
 
 
 def walk(value):
@@ -52,3 +57,11 @@ def test_build_model_pack_exports_dashboard_contract(tmp_path):
 def test_build_model_pack_rejects_unknown_styles():
     with pytest.raises(ValueError):
         build_model_pack({"MOONSHOT": {}}, ["AAPL"])
+
+
+def test_default_model_pack_path_targets_execution_dashboard():
+    assert DEFAULT_MODEL_PACK_PATH.parts[-3:] == (
+        "execution_dashboard",
+        "data",
+        "bot_model_pack.json",
+    )

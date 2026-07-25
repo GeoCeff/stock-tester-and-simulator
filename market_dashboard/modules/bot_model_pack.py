@@ -9,6 +9,9 @@ from pathlib import Path
 
 
 DASHBOARD_STYLES = ("DAY_TRADE", "OVERNIGHT_1D", "SWING_5D", "SWING_20D")
+DEFAULT_MODEL_PACK_PATH = (
+    Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "bot_model_pack.json"
+)
 
 
 def _clean(value):
@@ -65,7 +68,8 @@ def build_model_pack(results, universe, created_at=None):
     })
 
 
-def write_model_pack(pack, path):
-    path = Path(path)
+def write_model_pack(pack, path=None):
+    """Write directly to the execution dashboard unless another path is supplied."""
+    path = Path(path or DEFAULT_MODEL_PACK_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_clean(pack), indent=2, sort_keys=True), encoding="utf-8")
