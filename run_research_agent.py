@@ -4,14 +4,52 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, load_market_data
 from market_dashboard.modules.research_agent import publish_research_result, run_research_loop, update_paper_ledger
 
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,JPM,XOM,LLY,JNJ,PFE"
+NEWS_SNAPSHOT_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "market_research_snapshot.json"
+
+
+def refresh_news():
+    try:
+        result = subprocess.run(
+            ["node", str(Path(__file__).resolve().parent / "execution_dashboard" / "server.js"), "--refresh-agent-news"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        return (result.stdout or result.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"News gate unavailable: {error}"
+
+
+def apply_news_snapshot(result):
+    try:
+        symbols = json.loads(NEWS_SNAPSHOT_PATH.read_text(encoding="utf-8"))["symbols"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        symbols = {}
+    for entry in result["entries"]:
+        news = symbols.get(entry["symbol"], {})
+        action = news.get("action", "news_unavailable")
+        entry.update({
+            "news_action": action,
+            "news_status": news.get("news_status", "news_unavailable"),
+            "news": news.get("news", []),
+            "news_reasons": news.get("reasons", ["news unavailable"]),
+            "status": {
+                "pass": "PAPER_CANDIDATE",
+                "reduce": "PAPER_CANDIDATE_REDUCED",
+                "reject": "REJECTED_BY_NEWS",
+            }.get(action, "PAPER_CANDIDATE_REDUCED_NEWS_UNAVAILABLE"),
+        })
 
 
 def run_once(args):
@@ -40,12 +78,16 @@ def run_once(args):
         warmup=args.warmup,
         cost_bps_per_side=args.cost_bps,
     )
+    publish_research_result(result)
+    news_status = refresh_news()
+    apply_news_snapshot(result)
     result["paper_evidence"] = update_paper_ledger(result, data, cost_bps_per_side=args.cost_bps)
     publish_research_result(result)
     passed = [style for style, row in result["styles"].items() if row["acceptance"]["status"] == "pass"]
     print(f"{result['created_at']} evaluated {result['evaluated_candidates']} candidates from {status.get('source', 'market data')}")
     print(f"Passed styles: {', '.join(passed) if passed else 'none; execution remains blocked'}")
     print(f"Paper evidence: {result['paper_evidence']['status']} ({result['paper_evidence']['closed_trades']} closed trades)")
+    print(news_status)
     print(json.dumps(result["entries"], indent=2))
     return result
 

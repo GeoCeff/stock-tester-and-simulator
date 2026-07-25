@@ -286,8 +286,19 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
     }
     for entry in result["entries"]:
         key = (entry["symbol"], entry["style"], entry["signal_date"])
-        if key not in existing:
+        matching = [
+            row for row in still_open
+            if (row["symbol"], row["style"], row["signal_date"]) == key
+        ]
+        if matching:
+            for field in ("news_action", "news_status", "news", "news_reasons", "status"):
+                if field in entry:
+                    matching[0][field] = entry[field]
+        elif key not in existing and entry.get("news_action") != "reject":
             still_open.append({**entry, "entry": None, "entry_date": None})
+    rejected = [row for row in still_open if row.get("news_action") == "reject" and not row.get("entry_date")]
+    ledger["cancelled"].extend({**row, "reason": "rejected by news gate"} for row in rejected)
+    still_open = [row for row in still_open if row not in rejected]
     ledger["positions"] = still_open
 
     by_style = {}

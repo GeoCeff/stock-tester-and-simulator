@@ -57,11 +57,12 @@ The agent:
 4. validates the winner on one untouched final fold;
 5. publishes passing model settings and current entry/stop/target candidates;
 6. advances a real-data forward paper ledger in `execution_dashboard/data/research_paper.json`;
-7. publishes a rejected result when nothing passes.
+7. refreshes the existing news gate for current candidates without requiring the browser to be open;
+8. publishes a rejected result when nothing passes.
 
 Paper signals are filled at the next available market open and do not count as evidence until a later bar closes them by stop, target, or maximum hold. At least 30 closed trades in one style, positive cost-adjusted expectancy, profit factor of 1.2, and drawdown within 15% are required for the ledger to report that style as validated.
 
-The execution dashboard reloads the agent result and model pack whenever research refreshes. Only matching, fresh signals can pass its research-agent gate. While the dashboard is open, technical/news research refreshes hourly; unavailable news stays explicitly unavailable. News and every existing account, quote, model, learning, fee, and IBKR gate can still reduce or reject a setup.
+The execution dashboard reloads the agent result and model pack whenever research refreshes. Only matching, fresh signals can pass its research-agent gate. News refreshes with every agent run and hourly while the dashboard is open; unavailable news reduces rather than approves a setup. News and every existing account, quote, model, learning, fee, and IBKR gate can still reduce or reject a setup.
 
 Backtests are hypothetical, so a pass is a paper-trading candidate—not a promise of future profit. Paper trade before deliberately enabling any live mode.
 

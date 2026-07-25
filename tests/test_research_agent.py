@@ -4,6 +4,7 @@ import pandas as pd
 import json
 
 import market_dashboard.modules.research_agent as research_agent
+import run_research_agent as research_runner
 from market_dashboard.modules.research_agent import publish_research_result, run_research_loop, update_paper_ledger
 
 
@@ -115,3 +116,20 @@ def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
     assert ledger["closed"][0]["entry"] == 101
     assert ledger["closed"][0]["exit_reason"] == "stop"
     assert ledger["closed"][0]["return"] < 0
+
+
+def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
+    path = tmp_path / "news.json"
+    path.write_text(json.dumps({"symbols": {"TEST": {
+        "action": "reduce",
+        "news_status": "ok",
+        "news": [{"title": "Negative headline"}],
+        "reasons": ["negative headline risk"],
+    }}}), encoding="utf-8")
+    monkeypatch.setattr(research_runner, "NEWS_SNAPSHOT_PATH", path)
+    result = {"entries": [{"symbol": "TEST"}]}
+
+    research_runner.apply_news_snapshot(result)
+
+    assert result["entries"][0]["status"] == "PAPER_CANDIDATE_REDUCED"
+    assert result["entries"][0]["news_action"] == "reduce"

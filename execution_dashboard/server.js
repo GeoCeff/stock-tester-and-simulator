@@ -293,29 +293,65 @@ async function openAiResearch(symbol, row, market) {
   };
 }
 
-async function attachNews(snapshot, symbols) {
-  const next = snapshot && typeof snapshot === "object" ? snapshot : {};
-  next.symbols = next.symbols && typeof next.symbols === "object" ? next.symbols : {};
-  const requested = [...new Set((symbols || Object.keys(next.symbols)).map((symbol) => String(symbol || "").toUpperCase()).filter(Boolean))].slice(0, 25);
-  await Promise.all(requested.map(async (symbol) => {
-    const row = next.symbols[symbol] || {};
-    const news = await fetchNews(symbol);
-    const reasons = Array.isArray(row.reasons) ? row.reasons : [];
-    if (news.status !== "ok" && !reasons.includes("news unavailable")) reasons.push("news unavailable");
-    if (news.items.some((item) => item.sentiment === "negative") && row.action === "pass") {
-      row.action = "reduce";
+function mergeNews(row, news) {
+    const next = { ...row };
+    const reasons = Array.isArray(next.reasons) ? [...next.reasons] : [];
+    if (news.status !== "ok") {
+      if (!reasons.includes("news unavailable")) reasons.push("news unavailable");
+      if (next.action === "pass") next.action = "news_unavailable";
+    }
+    if (news.items.some((item) => item.sentiment === "negative") && next.action === "pass") {
+      next.action = "reduce";
       reasons.push("negative headline risk");
     }
-    next.symbols[symbol] = {
-      ...row,
+    return {
+      ...next,
       news: news.items,
       news_status: news.status,
       news_error: news.error,
       reasons
     };
+}
+
+async function attachNews(snapshot, symbols) {
+  const next = snapshot && typeof snapshot === "object" ? snapshot : {};
+  next.symbols = next.symbols && typeof next.symbols === "object" ? next.symbols : {};
+  const requested = [...new Set((symbols || Object.keys(next.symbols)).map((symbol) => String(symbol || "").toUpperCase()).filter(Boolean))].slice(0, 25);
+  await Promise.all(requested.map(async (symbol) => {
+    next.symbols[symbol] = mergeNews(next.symbols[symbol] || {}, await fetchNews(symbol));
   }));
   next.created_at = next.created_at || new Date().toISOString();
   return next;
+}
+
+function agentNewsSnapshot(agent) {
+  const symbols = {};
+  for (const entry of agent.entries || []) {
+    symbols[entry.symbol] = {
+      action: "pass",
+      reasons: ["walk-forward and final holdout passed"],
+      candidate: entry
+    };
+  }
+  return {
+    schema_version: 1,
+    created_at: new Date().toISOString(),
+    research_version: "agent-news-v1",
+    symbols
+  };
+}
+
+async function refreshAgentNews() {
+  const agent = readJsonFile(RESEARCH_AGENT_FILE);
+  const validation = validateResearchAgent(agent);
+  if (!validation.ok) throw new Error(validation.error);
+  const snapshot = await attachAiResearch(await attachNews(agentNewsSnapshot(agent)));
+  writeJsonFile(RESEARCH_FILE, snapshot);
+  const counts = Object.values(snapshot.symbols).reduce((result, row) => {
+    result[row.action] = (result[row.action] || 0) + 1;
+    return result;
+  }, {});
+  return { symbols: Object.keys(snapshot.symbols).length, actions: counts };
 }
 
 async function attachAiResearch(snapshot, symbols) {
@@ -772,10 +808,19 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  server.listen(PORT, HOST, () => {
-    console.log(`Stock Performance Analyzer: http://${HOST}:${PORT}`);
-    console.log(`IBKR Client Portal Gateway expected at ${IBKR_BASE}`);
-  });
+  if (process.argv.includes("--refresh-agent-news")) {
+    refreshAgentNews()
+      .then((result) => console.log(`News gate: ${result.symbols} candidate(s) ${JSON.stringify(result.actions)}`))
+      .catch((error) => {
+        console.error(`News gate unavailable: ${error.message}`);
+        process.exitCode = 1;
+      });
+  } else {
+    server.listen(PORT, HOST, () => {
+      console.log(`Stock Performance Analyzer: http://${HOST}:${PORT}`);
+      console.log(`IBKR Client Portal Gateway expected at ${IBKR_BASE}`);
+    });
+  }
 }
 
-module.exports = { validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, parseRssItems, newsSentiment, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, parseRssItems, newsSentiment, mergeNews, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
