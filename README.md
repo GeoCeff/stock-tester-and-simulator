@@ -49,6 +49,13 @@ Or keep it running once per day:
 .\.venv\Scripts\python.exe .\run_research_agent.py --watch-minutes 1440
 ```
 
+To make that daily loop survive sign-out and Windows restarts, register it as
+a per-user scheduled task:
+
+```powershell
+.\research_agent_task.ps1
+```
+
 The agent:
 
 1. downloads real daily data without demo fallback;
@@ -96,6 +103,7 @@ node execution_dashboard\self_check.js
 
 - `market_dashboard/modules/` — data loading, indicators, strategies, backtests, simulator, Quant Lab, portfolio, and model-pack export
 - `run_research_agent.py` — bounded walk-forward search and daily repeat mode
+- `research_agent_task.ps1` — persistent per-user Windows launcher
 - `market_dashboard/ui/` — shared Streamlit theme and components
 - `execution_dashboard/` — live dashboard, local API, IBKR bridge, operator scripts, and Node self-check
 - `tests/` — Python test suite
