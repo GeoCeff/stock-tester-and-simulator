@@ -899,6 +899,17 @@
   };
 
   async function initDashboard() {
+    if (location.protocol === "file:") {
+      try {
+        const response = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
+        if (response.ok) {
+          location.replace(API_BASE);
+          return;
+        }
+      } catch {
+        // ponytail: keep the read-only file fallback when the local server is not running.
+      }
+    }
     await loadState();
     await syncServerHealth();
     await loadModelPack();

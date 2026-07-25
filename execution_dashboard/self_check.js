@@ -106,9 +106,11 @@ assert(app.dailyLimitReasons({ equity: 1000, dailyLossLimit: 0.02, dailyMaxLossD
 assert.equal(app.estimateSetupFees(10, 20, 22).roundTrip > 0, true);
 
 const dashboardHtml = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+const dashboardJs = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
 const launcher = fs.readFileSync(path.join(__dirname, "..", "start_all.ps1"), "utf8");
 assert(dashboardHtml.includes("<title>Stock Lab — Research & Execution</title>"), "unified dashboard title should be present");
 assert(dashboardHtml.includes('id="workspace"') && dashboardHtml.includes('id="analysis-hub"'), "primary navigation targets should exist");
+assert(dashboardJs.includes('location.protocol === "file:"') && dashboardJs.includes("location.replace(API_BASE)"), "direct file launches should recover into the local server");
 assert(!launcher.includes("8501"), "the unified launcher must not start the retired Streamlit UI");
 assert.equal((launcher.match(/Start-Process "http:/g) || []).length, 1, "the unified launcher should open one browser application");
 
