@@ -152,6 +152,36 @@ def test_paper_ledger_does_not_overlap_persistent_signal(tmp_path):
     assert positions[0]["signal_date"] == "2026-01-05"
 
 
+def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):
+    date = pd.date_range("2026-01-05", periods=1, freq="B")
+    data = pd.DataFrame({
+        ("Open", "TEST"): [100],
+        ("High", "TEST"): [101],
+        ("Low", "TEST"): [99],
+        ("Close", "TEST"): [100],
+    }, index=date)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    entry = {
+        "symbol": "TEST",
+        "side": "LONG",
+        "style": "SWING_20D",
+        "strategy": "trend_momentum",
+        "signal_date": "2026-01-05",
+        "entry": 100,
+        "stop": 90,
+        "target": 120,
+        "max_hold": 20,
+        "status": "PAPER_CANDIDATE",
+    }
+    path = tmp_path / "paper.json"
+    update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data, path=path)
+    update_paper_ledger({"created_at": "2026-01-06T22:00:00Z", "entries": []}, data, path=path)
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+
+    assert ledger["positions"] == []
+    assert ledger["cancelled"][0]["reason"] == "research or news gate withdrew pending entry"
+
+
 def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
     path = tmp_path / "news.json"
     path.write_text(json.dumps({"symbols": {"TEST": {

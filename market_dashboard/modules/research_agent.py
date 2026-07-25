@@ -250,9 +250,12 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10):
     }
     still_open = []
     for position in ledger["positions"]:
+        candidate = current_candidates.get((position["symbol"], position["style"]))
+        if not position.get("entry_date") and (not candidate or candidate.get("news_action") == "reject"):
+            ledger["cancelled"].append({**position, "reason": "research or news gate withdrew pending entry"})
+            continue
         frame = get_ticker_frame(data, position["symbol"])
         if not position.get("entry_date"):
-            candidate = current_candidates.get((position["symbol"], position["style"]), {})
             position.setdefault("limit_entry", candidate.get("entry"))
             position.setdefault("entry_valid_bars", candidate.get("entry_valid_bars", ENTRY_VALID_BARS))
         future = frame.loc[frame.index > pd.Timestamp(position["signal_date"])]
