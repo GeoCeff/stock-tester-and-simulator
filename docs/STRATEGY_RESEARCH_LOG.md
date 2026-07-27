@@ -30,6 +30,8 @@ Decision: retain news as a freshness-bound execution risk gate, never as evidenc
 ## 2026-07-27 — Prospective paper-evidence audit
 
 - Mistake corrected: an unversioned legacy position could inherit the current plan ID and later contribute evidence to rules it did not actually observe. Legacy pending positions now cancel; already-filled legacy records remain isolated as `legacy-unversioned`.
+- Mistake corrected: 30 profitable closes from one symbol or a short burst could satisfy the forward gate. Validation now also requires five symbols, 60% positive symbols, and a 90-day exit span.
+- Mistake corrected: prospective drawdown followed ledger append order and omitted the starting-equity baseline. It now follows exit chronology and measures losses from initial capital.
 - Worked: signals enter the ledger before any future bar is inspected, limit fills begin strictly after the signal date, same-bar target fills are not assumed, stops receive conservative priority, and only the current exact plan can unlock live validation.
 - Plan identity now fingerprints the strategy, indicators, bracket replay, and paper-ledger implementation. Changing any evidence-producing rule starts a new evidence lane instead of inheriting old trades.
 - No paper positions were advanced and no market data was loaded during this audit.

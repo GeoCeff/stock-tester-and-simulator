@@ -77,6 +77,9 @@ ENTRY_VALID_BARS = 3
 EXECUTION_PLAN_VERSION = "daily-bars-v2"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
+PAPER_MIN_CLOSED_TRADES = 30
+PAPER_MIN_SYMBOLS = 5
+PAPER_MIN_SPAN_DAYS = 90
 
 
 def _indicators(close, market_breadth=None, benchmark_close=None):
@@ -632,16 +635,41 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
     plan_ids = {row.get("plan_id", "legacy-unversioned") for row in ledger["closed"]}
     for plan_id in sorted(plan_ids | current_plan_ids):
         rows = [row for row in ledger["closed"] if row.get("plan_id", "legacy-unversioned") == plan_id]
+        exit_dates = pd.to_datetime([row.get("exit_date") for row in rows], errors="coerce")
+        chronology_valid = bool(len(exit_dates) and exit_dates.notna().all())
+        if chronology_valid:
+            rows = [rows[index] for index in np.argsort(exit_dates)]
+            exit_dates = exit_dates.sort_values()
         returns = np.asarray([row["return"] for row in rows], dtype=float)
         wins = returns[returns > 0]
         losses = returns[returns < 0]
-        equity = pd.Series((1 + returns).cumprod())
+        equity = pd.Series(np.r_[1.0, (1 + returns).cumprod()])
         max_drawdown = float((equity / equity.cummax() - 1).min()) if not equity.empty else 0.0
         profit_factor = float(wins.sum() / abs(losses.sum())) if losses.size else (999.0 if wins.size else 0.0)
         expectancy = float(returns.mean()) if returns.size else 0.0
+        symbols = {}
+        for row in rows:
+            if row.get("symbol"):
+                symbols.setdefault(str(row["symbol"]), []).append(float(row["return"]))
+        positive_symbol_ratio = float(np.mean([
+            np.mean(symbol_returns) > 0 for symbol_returns in symbols.values()
+        ])) if symbols else 0.0
+        evidence_span_days = int((exit_dates.max() - exit_dates.min()).days) if chronology_valid else 0
+        validated = (
+            len(rows) >= PAPER_MIN_CLOSED_TRADES
+            and len(symbols) >= PAPER_MIN_SYMBOLS
+            and positive_symbol_ratio >= DEFAULT_GATES["min_positive_symbol_ratio"]
+            and evidence_span_days >= PAPER_MIN_SPAN_DAYS
+            and expectancy >= DEFAULT_GATES["min_expectancy"]
+            and profit_factor >= DEFAULT_GATES["min_profit_factor"]
+            and max_drawdown >= -DEFAULT_GATES["max_drawdown"]
+        )
         by_plan[plan_id] = {
-            "status": "validated" if len(rows) >= 30 and expectancy >= 0.001 and profit_factor >= 1.2 and max_drawdown >= -0.15 else "warming_up",
+            "status": "validated" if validated else "warming_up",
             "closed_trades": len(rows),
+            "symbols": len(symbols),
+            "positive_symbol_ratio": positive_symbol_ratio,
+            "evidence_span_days": evidence_span_days,
             "expectancy": expectancy,
             "profit_factor": profit_factor,
             "max_drawdown": max_drawdown,

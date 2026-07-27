@@ -675,14 +675,38 @@ def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
         "cancelled": [],
         "closed": [
             {
-                "symbol": "TEST",
+                "symbol": f"TEST{index % 5}",
                 "style": "SWING_20D",
                 "strategy": "old_strategy",
                 "plan_id": "old-plan",
                 "signal_date": "2025-01-01",
+                "exit_date": str((pd.Timestamp("2025-01-01") + pd.Timedelta(days=index * 4)).date()),
                 "return": 0.01,
             }
-            for _ in range(30)
+            for index in range(30)
+        ] + [
+            {
+                "symbol": "ORDER",
+                "style": "SWING_20D",
+                "signal_date": "2025-01-01",
+                "plan_id": "out-of-order",
+                "exit_date": exit_date,
+                "return": trade_return,
+            }
+            for exit_date, trade_return in (
+                ("2025-01-03", -0.2),
+                ("2025-01-01", -0.2),
+                ("2025-01-02", 0.3),
+            )
+        ] + [
+            {
+                "symbol": "LOSS",
+                "style": "SWING_20D",
+                "signal_date": "2025-01-01",
+                "plan_id": "initial-loss",
+                "exit_date": "2025-01-02",
+                "return": -0.2,
+            }
         ],
     }), encoding="utf-8")
     result = {
@@ -702,6 +726,50 @@ def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
     assert summary["by_plan"]["old-plan"]["status"] == "validated"
     assert summary["status"] == "warming_up"
     assert summary["current_closed_trades"] == 0
+    assert np.isclose(summary["by_plan"]["out-of-order"]["max_drawdown"], -0.2)
+    assert np.isclose(summary["by_plan"]["initial-loss"]["max_drawdown"], -0.2)
+
+
+def test_paper_gate_rejects_symbol_or_time_concentration(tmp_path):
+    path = tmp_path / "paper.json"
+    start = pd.Timestamp("2025-01-01")
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": [
+            {
+                "symbol": "ONLY",
+                "style": "SWING_20D",
+                "signal_date": "2025-01-01",
+                "plan_id": "one-symbol",
+                "exit_date": str((start + pd.Timedelta(days=index * 4)).date()),
+                "return": 0.01,
+            }
+            for index in range(30)
+        ] + [
+            {
+                "symbol": f"TEST{index % 5}",
+                "style": "SWING_20D",
+                "signal_date": "2025-01-01",
+                "plan_id": "short-burst",
+                "exit_date": str((start + pd.Timedelta(days=index)).date()),
+                "return": 0.01,
+            }
+            for index in range(30)
+        ],
+    }), encoding="utf-8")
+
+    summary = update_paper_ledger(
+        {"created_at": "2026-01-05T22:00:00Z", "entries": []},
+        pd.DataFrame(),
+        path=path,
+    )
+
+    assert summary["by_plan"]["one-symbol"]["status"] == "warming_up"
+    assert summary["by_plan"]["short-burst"]["status"] == "warming_up"
+    assert summary["by_plan"]["one-symbol"]["symbols"] == 1
+    assert summary["by_plan"]["short-burst"]["evidence_span_days"] == 29
 
 
 def test_legacy_position_cannot_be_credited_to_current_plan(tmp_path):
