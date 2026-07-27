@@ -89,6 +89,63 @@ def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
     assert json.loads(agent_path.read_text(encoding="utf-8"))["schema_version"] == 1
 
 
+def test_execution_folds_do_not_count_only_fast_losses_near_boundary(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=80, freq="B")
+    close = pd.Series(100.0, index=index)
+    lows = pd.Series(99.0, index=index)
+    for _, end in research_agent._folds(len(index), 4, 20):
+        lows.iloc[end - 4] = 94.0
+    data = pd.DataFrame({
+        ("Open", "TEST"): close,
+        ("High", "TEST"): 101.0,
+        ("Low", "TEST"): lows,
+        ("Close", "TEST"): close,
+        ("Volume", "TEST"): 1_000_000,
+    }, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+
+    class LateFoldSignal:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_signals(self, price, indicators):
+            signals = pd.Series(0.0, index=price.index)
+            for _, end in research_agent._folds(len(price), 4, 20):
+                signals.iloc[end - 5] = 1.0
+            return signals
+
+    monkeypatch.setitem(research_agent.STRATEGIES, "late_fold", LateFoldSignal)
+
+    evaluation = research_agent.evaluate_execution_plan(
+        data,
+        ["TEST"],
+        {"style": "SWING_20D", "strategy": "late_fold"},
+        folds=4,
+        warmup=20,
+        cost_bps_per_side=0,
+    )
+
+    assert sum(fold["trades"] for fold in evaluation["folds"]) == 0
+
+    class LateCloseSignal(research_agent.TrendMomentumStrategy):
+        def generate_signals(self, price, indicators):
+            signals = pd.Series(0.0, index=price.index)
+            signals.iloc[-1] = 1.0
+            return signals
+
+    monkeypatch.setitem(research_agent.STRATEGIES, "late_close", LateCloseSignal)
+    signal_evaluation = research_agent.evaluate_candidate(
+        data,
+        ["TEST"],
+        {"style": "SWING_5D", "strategy": "late_close"},
+        folds=4,
+        warmup=20,
+        cost_bps_per_side=100,
+    )
+
+    assert all(fold["total_return"] == 0 for fold in signal_evaluation["folds"])
+
+
 def test_research_loop_requires_a_separate_final_holdout():
     with np.testing.assert_raises_regex(ValueError, "at least four folds"):
         run_research_loop(pd.DataFrame(), ["TEST"], folds=3)

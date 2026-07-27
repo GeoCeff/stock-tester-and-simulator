@@ -69,6 +69,8 @@ The agent:
 10. records compact run lessons in `execution_dashboard/data/research_history.jsonl`;
 11. publishes a rejected result when nothing passes.
 
+Fold evaluators stop opening new positions early enough for the full entry-validity window and maximum hold to remain observable inside that fold. This prevents fast stops near a fold edge from counting while unresolved trades disappear.
+
 The fixed universe is predeclared but selected from current securities, so historical results can contain survivorship bias. They support decisions only for this stated universe and still require untouched-holdout and prospective paper evidence; they are not an unbiased historical-index claim.
 
 Paper signals use the published limit entry for up to three future bars, allow only one open position per symbol/style, and are cancelled before filling if research or news withdraws them. Daily bars never claim a target on the ambiguous fill bar, and a gap through a stop exits at the worse opening price. Trades do not count as evidence until a real later bar closes them by stop, target, or maximum hold. Evidence is isolated by fingerprints of the strategy, indicators, and paper-execution code plus the news/model version, holding period, bracket rules, entry validity, and cost assumption, so old implementations cannot validate a new plan. Validation requires at least 30 closed trades in one exact plan across at least five symbols and 90 calendar days, at least 60% positive symbols, positive cost-adjusted expectancy, profit factor of 1.2, and drawdown within 15%.

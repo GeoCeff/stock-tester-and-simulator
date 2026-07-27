@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v2"
+EXECUTION_PLAN_VERSION = "daily-bars-v3"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -193,6 +193,7 @@ def evaluate_candidate(data, universe, candidate, *, folds=4, warmup=200, cost_b
                 ),
             )
             signals.iloc[:start] = 0.0
+            signals.iloc[max(start, end - config["holding_period"]):] = 0.0
             result = strategy.compute_positions_and_equity(signals, close.iloc[:end])
             returns_by_symbol[symbol] = result["daily_return"].iloc[start:end]
             trade_returns.extend(
@@ -287,7 +288,8 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                 (frame["Low"] - previous).abs(),
             ], axis=1).max(axis=1).rolling(14).mean()
             index = start
-            while index < end:
+            signal_end = end - config["holding_period"] - ENTRY_VALID_BARS + 1
+            while index < signal_end:
                 if signals.iloc[index] <= 0 or not np.isfinite(atr.iloc[index]):
                     index += 1
                     continue
@@ -485,6 +487,8 @@ def _paper_plan_id(row, cost_bps_per_side):
             bollinger,
             rsi,
             _bracket_exit,
+            evaluate_candidate,
+            evaluate_execution_plan,
             update_paper_ledger,
         )).encode("utf-8")
     ).hexdigest()[:12]

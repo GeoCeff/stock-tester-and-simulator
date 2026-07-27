@@ -46,6 +46,15 @@ Decision: stale evidence may remain visible for review but cannot authorize a li
 
 Decision: fail the entire research run on partial, stale, malformed, future, demo, or unrecognized data rather than silently shrinking the universe.
 
+## 2026-07-27 — Fold-edge censoring audit
+
+- Mistake corrected: bracket trades opened near a fold end counted when they hit a stop quickly but disappeared when they remained unresolved. Signal folds could likewise retain entry costs and partial mark-to-market while omitting the trade from expectancy.
+- Both evaluators now stop admitting entries early enough to observe the complete entry-validity window and maximum hold within the same fold.
+- The daily-bar engine is versioned as `daily-bars-v3`, and exact-plan identity now fingerprints both evaluators so earlier paper evidence cannot validate this changed research methodology.
+- No strategy or market-data evaluation was run during this audit.
+
+Decision: use only fully observable fold outcomes; never infer performance from selectively resolved boundary trades.
+
 ## 2026-07-27 — Prospective paper-evidence audit
 
 - Mistake corrected: an unversioned legacy position could inherit the current plan ID and later contribute evidence to rules it did not actually observe. Legacy pending positions now cancel; already-filled legacy records remain isolated as `legacy-unversioned`.
