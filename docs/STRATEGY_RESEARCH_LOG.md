@@ -36,6 +36,16 @@ Decision: retain news as a freshness-bound execution risk gate, never as evidenc
 
 Decision: stale evidence may remain visible for review but cannot authorize a live order.
 
+## 2026-07-27 — Market-data provenance audit
+
+- Mistake corrected: Auto accepted a partial Yahoo response without trying Stooq for complete coverage. Auto now continues after partial data and prefers a complete recognized-provider response.
+- Mistake corrected: the runner rejected explicit demo status but did not enforce provider identity, complete universe-plus-SPY coverage, freshness, requested history span, chronological uniqueness, or valid OHLC relationships.
+- Predeclared data gate: every required symbol needs at least the fold warmup, a bar within seven calendar days, 90% of the requested history, positive prices, and internally consistent open/high/low/close values.
+- Known limitation: the fixed universe uses current securities and therefore carries survivorship bias. Historical evidence is scoped to that stated universe and cannot substitute for point-in-time constituent data; prospective paper evidence remains mandatory.
+- No provider request or strategy evaluation was made during this audit.
+
+Decision: fail the entire research run on partial, stale, malformed, future, demo, or unrecognized data rather than silently shrinking the universe.
+
 ## 2026-07-27 — Prospective paper-evidence audit
 
 - Mistake corrected: an unversioned legacy position could inherit the current plan ID and later contribute evidence to rules it did not actually observe. Legacy pending positions now cancel; already-filled legacy records remain isolated as `legacy-unversioned`.

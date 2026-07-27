@@ -1,11 +1,58 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 import json
 
 import market_dashboard.modules.research_agent as research_agent
 import run_research_agent as research_runner
 from market_dashboard.modules.research_agent import append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
+
+
+def test_research_data_gate_requires_current_complete_real_ohlc():
+    index = pd.date_range("2024-01-02", "2025-01-31", freq="B")
+    close = pd.Series(np.linspace(100, 120, len(index)), index=index)
+    columns = {}
+    for symbol in ("TEST", "SPY"):
+        columns.update({
+            ("Open", symbol): close,
+            ("High", symbol): close + 1,
+            ("Low", symbol): close - 1,
+            ("Close", symbol): close,
+            ("Volume", symbol): 1_000_000,
+        })
+    data = pd.DataFrame(columns, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    status = {
+        "source": "Yahoo Finance",
+        "is_demo": False,
+        "loaded_tickers": ["TEST", "SPY"],
+    }
+
+    research_runner.validate_research_data(
+        data, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4
+    )
+
+    with pytest.raises(RuntimeError, match="missing required symbols"):
+        research_runner.validate_research_data(
+            data, {**status, "loaded_tickers": ["TEST"]},
+            ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4,
+        )
+    with pytest.raises(RuntimeError, match="recognized real-data provider"):
+        research_runner.validate_research_data(
+            data, {**status, "is_demo": True},
+            ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4,
+        )
+    with pytest.raises(RuntimeError, match="latest bar is stale"):
+        research_runner.validate_research_data(
+            data, status, ["TEST", "SPY"], "2024-01-01", "2025-03-01", 200, 4
+        )
+    bad = data.copy()
+    bad.loc[index[-1], ("High", "TEST")] = 1
+    with pytest.raises(RuntimeError, match="invalid OHLC"):
+        research_runner.validate_research_data(
+            bad, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4
+        )
 
 
 def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):

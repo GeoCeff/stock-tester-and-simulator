@@ -10,7 +10,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from market_dashboard.modules.data import DATA_SOURCE_AUTO, load_market_data
+import pandas as pd
+
+from market_dashboard.modules.data import DATA_SOURCE_AUTO, DATA_SOURCE_STOOQ, DATA_SOURCE_YAHOO, get_ticker_frame, load_market_data
 from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, DEFAULT_SHADOW_LEDGER_PATH, append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
 
 
@@ -18,6 +20,42 @@ DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY
 NEWS_SNAPSHOT_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "market_research_snapshot.json"
 WATCH_LOCK_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "research_agent.lock"
 NEWS_SNAPSHOT_MAX_AGE = timedelta(minutes=30)
+MIN_HISTORY_COVERAGE = 0.90
+MAX_LATEST_BAR_AGE_DAYS = 7
+
+
+def validate_research_data(data, status, symbols, start, end, warmup, folds):
+    """Fail closed unless the research frame has current, complete real OHLC data."""
+    if status.get("is_demo") or status.get("source") not in {DATA_SOURCE_YAHOO, DATA_SOURCE_STOOQ}:
+        raise RuntimeError("refusing research without a recognized real-data provider")
+    missing = sorted(set(symbols) - set(status.get("loaded_tickers", [])))
+    if missing:
+        raise RuntimeError(f"market data missing required symbols: {', '.join(missing)}")
+    if not isinstance(data.index, pd.DatetimeIndex) or not data.index.is_monotonic_increasing or data.index.has_duplicates:
+        raise RuntimeError("market data requires a unique chronological DatetimeIndex")
+
+    start = pd.Timestamp(start)
+    end = pd.Timestamp(end)
+    if data.index.max() >= end:
+        raise RuntimeError("market data contains a future bar")
+    minimum_rows = warmup + folds * 10
+    minimum_span = (end - start).days * MIN_HISTORY_COVERAGE
+    latest_cutoff = end - pd.Timedelta(days=MAX_LATEST_BAR_AGE_DAYS + 1)
+    for symbol in symbols:
+        frame = get_ticker_frame(data, symbol)
+        ohlc = frame[["Open", "High", "Low", "Close"]].apply(pd.to_numeric, errors="coerce").dropna()
+        if len(ohlc) < minimum_rows:
+            raise RuntimeError(f"{symbol} has fewer than {minimum_rows} complete OHLC bars")
+        if ohlc.index.max() < latest_cutoff:
+            raise RuntimeError(f"{symbol} latest bar is stale")
+        if (ohlc.index.max() - ohlc.index.min()).days < minimum_span:
+            raise RuntimeError(f"{symbol} does not cover 90% of the requested history")
+        if (
+            (ohlc <= 0).any().any()
+            or (ohlc["High"] < ohlc[["Open", "Close"]].max(axis=1)).any()
+            or (ohlc["Low"] > ohlc[["Open", "Close"]].min(axis=1)).any()
+        ):
+            raise RuntimeError(f"{symbol} has invalid OHLC prices")
 
 
 def acquire_watch_lock(path=WATCH_LOCK_PATH):
@@ -119,8 +157,7 @@ def run_once(args):
     )
     if data is None or data.empty:
         raise RuntimeError(status.get("message", "real market data unavailable"))
-    if status.get("is_demo"):
-        raise RuntimeError("refusing to publish research from demo data")
+    validate_research_data(data, status, [*universe, BENCHMARK_SYMBOL], start, end, args.warmup, args.folds)
 
     result = run_research_loop(
         data,

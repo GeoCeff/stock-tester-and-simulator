@@ -161,3 +161,32 @@ def test_load_market_data_auto_can_fall_back_to_stooq(monkeypatch):
     assert status["requested_source"] == DATA_SOURCE_AUTO
     assert status["provider_attempts"] == ["Yahoo Finance", DATA_SOURCE_STOOQ]
     assert ("Close", "AAPL") in loaded.columns
+
+
+def test_load_market_data_auto_continues_after_partial_yahoo(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=10, freq="B")
+    partial = pd.DataFrame(
+        1.0,
+        index=index,
+        columns=pd.MultiIndex.from_product([PRICE_COLUMNS, ["AAPL"]], names=["Field", "Ticker"]),
+    )
+    complete = pd.DataFrame(
+        1.0,
+        index=index,
+        columns=pd.MultiIndex.from_product([PRICE_COLUMNS, ["AAPL", "MSFT"]], names=["Field", "Ticker"]),
+    )
+
+    monkeypatch.setattr("market_dashboard.modules.data.download_data", lambda *args: partial)
+    monkeypatch.setattr("market_dashboard.modules.data.download_stooq_data", lambda *args: complete)
+
+    loaded, status = load_market_data(
+        ["AAPL", "MSFT"],
+        "2024-01-01",
+        "2024-02-01",
+        "1d",
+        source=DATA_SOURCE_AUTO,
+    )
+
+    assert status["source"] == DATA_SOURCE_STOOQ
+    assert status["loaded_tickers"] == ["AAPL", "MSFT"]
+    assert ("Close", "MSFT") in loaded.columns

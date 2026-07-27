@@ -482,6 +482,7 @@ def load_market_data(
         )
 
     provider_attempts = []
+    partial_response = None
     for provider_name, downloader in _source_downloaders(requested_source, interval):
         provider_attempts.append(provider_name)
         data = downloader(requested_tickers, start, end, interval)
@@ -497,7 +498,12 @@ def load_market_data(
             interval,
         )
         if response is not None:
-            return response
+            if response[1]["status"] == "live":
+                return response
+            partial_response = partial_response or response
+
+    if partial_response is not None:
+        return partial_response
 
     unavailable_source = requested_source if requested_source != DATA_SOURCE_AUTO else ", ".join(provider_attempts) or DATA_SOURCE_AUTO
     if not allow_demo_fallback:

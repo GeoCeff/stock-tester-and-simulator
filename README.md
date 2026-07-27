@@ -57,7 +57,7 @@ a per-user scheduled task:
 
 The agent:
 
-1. downloads real daily data for a fixed 20-stock, multi-sector universe without demo fallback;
+1. downloads recognized-provider daily data for a fixed 20-stock, multi-sector universe plus SPY without demo fallback, requiring full symbols, valid OHLC, recent bars, and at least 90% of the requested history;
 2. tests the built-in strategies and holding periods with estimated costs;
 3. selects on development folds;
 4. validates the winner on one untouched final fold;
@@ -68,6 +68,8 @@ The agent:
 9. refreshes the existing news gate for current candidates without requiring the browser to be open;
 10. records compact run lessons in `execution_dashboard/data/research_history.jsonl`;
 11. publishes a rejected result when nothing passes.
+
+The fixed universe is predeclared but selected from current securities, so historical results can contain survivorship bias. They support decisions only for this stated universe and still require untouched-holdout and prospective paper evidence; they are not an unbiased historical-index claim.
 
 Paper signals use the published limit entry for up to three future bars, allow only one open position per symbol/style, and are cancelled before filling if research or news withdraws them. Daily bars never claim a target on the ambiguous fill bar, and a gap through a stop exits at the worse opening price. Trades do not count as evidence until a real later bar closes them by stop, target, or maximum hold. Evidence is isolated by fingerprints of the strategy, indicators, and paper-execution code plus the news/model version, holding period, bracket rules, entry validity, and cost assumption, so old implementations cannot validate a new plan. Validation requires at least 30 closed trades in one exact plan across at least five symbols and 90 calendar days, at least 60% positive symbols, positive cost-adjusted expectancy, profit factor of 1.2, and drawdown within 15%.
 
