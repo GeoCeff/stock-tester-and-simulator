@@ -25,7 +25,6 @@ const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.co
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
-const pendingLiveReplies = new Map();
 const NEWS_TERMS = {
   AAPL: ["Apple"],
   MSFT: ["Microsoft"],
@@ -466,6 +465,8 @@ function validateLiveOrders(orders) {
 
 function validateAutoOrder(body) {
   if (body.auto && !FULL_AUTO_ENABLED) return { ok: false, status: 403, error: "full auto disabled; restart with ENABLE_FULL_AUTO=1" };
+  const symbol = String(body.symbol || "").toUpperCase();
+  if (!body.auto && body.confirmation !== `LIVE ${symbol}`) return { ok: false, status: 403, error: `type LIVE ${symbol} to confirm this live order` };
   return { ok: true };
 }
 
@@ -628,20 +629,6 @@ function canonicalResearchOrders([entry, target, stop]) {
     { conid: Number(target.conid), side: "SELL", orderType: "LMT", price: Number(target.price), quantity: Number(target.quantity), tif: target.tif, parentId: entry.cOID, cOID: target.cOID },
     { conid: Number(stop.conid), side: "SELL", orderType: "STP", auxPrice: Number(stop.auxPrice), quantity: Number(stop.quantity), tif: stop.tif, parentId: entry.cOID, cOID: stop.cOID }
   ];
-}
-
-function liveReplyIds(value, ids = []) {
-  if (Array.isArray(value)) value.forEach((item) => liveReplyIds(item, ids));
-  else if (value && typeof value === "object") {
-    if (value.id && Array.isArray(value.message)) ids.push(String(value.id));
-    Object.values(value).forEach((item) => liveReplyIds(item, ids));
-  }
-  return [...new Set(ids)];
-}
-
-function rememberLiveReplies(result) {
-  const expiresAt = Date.now() + 10 * 60000;
-  liveReplyIds(result).forEach((id) => pendingLiveReplies.set(id, expiresAt));
 }
 
 function ibkrRequest(method, endpoint, body) {
@@ -939,23 +926,7 @@ async function handleApi(req, res, url) {
     const brokerOrders = canonicalResearchOrders(orders);
     const intent = appendAudit({ type: "live_order_intent", accountId, setupId: body.setupId, orders: brokerOrders });
     const result = await ibkrRequest("POST", `iserver/account/${encodeURIComponent(accountId)}/orders`, brokerOrders);
-    rememberLiveReplies(result);
     appendAudit({ type: "live_order_response", accountId, setupId: body.setupId, intentTime: intent.time, result });
-    return send(res, 200, result);
-  }
-  if (url.pathname === "/api/ibkr/reply") {
-    if (!LIVE_ORDERS_ENABLED) return send(res, 403, { ok: false, error: "live orders disabled; restart with ENABLE_LIVE_ORDERS=1" });
-    const body = await readJson(req);
-    if (!body.replyId) return send(res, 400, { ok: false, error: "replyId required" });
-    const replyId = String(body.replyId);
-    if (!pendingLiveReplies.has(replyId) || pendingLiveReplies.get(replyId) < Date.now()) {
-      pendingLiveReplies.delete(replyId);
-      return send(res, 403, { ok: false, error: "reply was not issued by a recent validated live order" });
-    }
-    appendAudit({ type: "live_order_reply", replyId: body.replyId, confirmed: Boolean(body.confirmed) });
-    pendingLiveReplies.delete(replyId);
-    const result = await ibkrRequest("POST", `iserver/reply/${encodeURIComponent(replyId)}`, { confirmed: Boolean(body.confirmed) });
-    rememberLiveReplies(result);
     return send(res, 200, result);
   }
   return send(res, 404, { ok: false, error: "unknown api route" });
@@ -998,4 +969,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, canonicalResearchOrders, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };

@@ -17,6 +17,16 @@
 
 Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
 
+## 2026-07-27 — Live confirmation audit
+
+- Mistake corrected: `LIVE SYMBOL` was enforced only by browser JavaScript, while the server accepted an otherwise valid manual order without proof of that per-trade confirmation.
+- Mistake corrected: an unused server endpoint could positively acknowledge a recent IBKR warning reply even though the dashboard provided no review or confirmation control for it.
+- Manual submissions now require the exact phrase at the server boundary. The unused positive broker-warning reply path and its in-memory reply store were removed; warning responses remain unconfirmed.
+- Full auto still requires its separate startup flag and all existing evidence and risk gates.
+- No IBKR request, order, strategy evaluation, or market-data load was made during this audit.
+
+Decision: manual confirmation is a server invariant, and unreviewed brokerage warnings never receive an automatic acknowledgement.
+
 ## 2026-07-27 — Live order-semantics audit
 
 - Mistake corrected: the server checked bracket prices and types but accepted any generally supported time-in-force, allowing a swing bracket to be changed from `GTC` to `IOC`.

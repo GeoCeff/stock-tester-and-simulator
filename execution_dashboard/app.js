@@ -2591,7 +2591,8 @@
         style: setup.style,
         planId: candidate?.plan_id || "",
         orders,
-        auto
+        auto,
+        confirmation: auto ? "" : `LIVE ${setup.symbol}`
       });
       state.orders.unshift({
         id: `${auto ? "AUTO" : "LIVE"}-${Date.now()}`,

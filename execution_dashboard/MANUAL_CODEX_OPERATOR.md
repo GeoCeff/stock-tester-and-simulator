@@ -40,5 +40,5 @@ Review the current dashboard pick. Check technicals, model/research status, quot
 - No ChatGPT Plus/API automation is used in this mode.
 - Do not paste API keys into Codex chat.
 - Do not treat AI/news notes as a proven strategy.
-- Codex advice cannot bypass dashboard, IBKR, quote freshness, model pack, account, or typed-confirmation gates.
+- Codex advice cannot bypass dashboard, IBKR, quote freshness, model pack, account, or server-enforced typed-confirmation gates.
 - Full-auto stays locked unless you intentionally start `start_full_auto_dashboard.ps1`.
