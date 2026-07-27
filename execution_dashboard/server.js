@@ -605,6 +605,18 @@ function ibkrNetLiquidation(result) {
   return result?.ok && Number.isFinite(amount) && amount > 0 ? amount : NaN;
 }
 
+function validateResearchContract(orders, symbol, result) {
+  const conids = new Set((orders || []).map((order) => Number(order.conid)));
+  if (conids.size !== 1) return { ok: false, error: "all bracket legs must use the same contract" };
+  const conid = [...conids][0];
+  const match = result?.ok && Array.isArray(result.data) && result.data.some((row) =>
+    Number(row.conid ?? row.conId) === conid
+    && String(row.symbol || "").toUpperCase() === symbol
+    && String(row.secType || "").toUpperCase() === "STK"
+  );
+  return match ? { ok: true } : { ok: false, error: "order contract does not match the validated research symbol" };
+}
+
 function liveReplyIds(value, ids = []) {
   if (Array.isArray(value)) value.forEach((item) => liveReplyIds(item, ids));
   else if (value && typeof value === "object") {
@@ -880,18 +892,23 @@ async function handleApi(req, res, url) {
     const body = await readJson(req);
     const accountId = body.accountId;
     const orders = body.orders;
+    const symbol = String(body.symbol || "").toUpperCase();
     const autoValidation = validateAutoOrder(body);
     if (!autoValidation.ok) {
       appendAudit({ type: "auto_order_rejected", accountId, setupId: body.setupId, reason: "full auto disabled" });
       return send(res, autoValidation.status, { ok: false, error: autoValidation.error });
     }
     if (!accountId) return send(res, 400, { ok: false, error: "accountId required" });
+    if (!/^[A-Z0-9.-]{1,12}$/.test(symbol)) return send(res, 400, { ok: false, error: "valid symbol required" });
     const validation = validateLiveOrders(orders);
     if (!validation.ok) {
       appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: validation.error });
       return send(res, 400, validation);
     }
-    const accountSummary = await ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/summary`);
+    const [accountSummary, contractSearch] = await Promise.all([
+      ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/summary`),
+      ibkrRequest("POST", "iserver/secdef/search", { symbol, name: false, secType: "STK" })
+    ]);
     const researchValidation = validateResearchOrder(
       body,
       readJsonFile(RESEARCH_AGENT_FILE, null),
@@ -900,6 +917,11 @@ async function handleApi(req, res, url) {
     if (!researchValidation.ok) {
       appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: researchValidation.error });
       return send(res, 403, researchValidation);
+    }
+    const contractValidation = validateResearchContract(orders, researchValidation.candidate.symbol, contractSearch);
+    if (!contractValidation.ok) {
+      appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: contractValidation.error });
+      return send(res, 403, contractValidation);
     }
     const intent = appendAudit({ type: "live_order_intent", accountId, setupId: body.setupId, orders });
     const result = await ibkrRequest("POST", `iserver/account/${encodeURIComponent(accountId)}/orders`, orders);
@@ -962,4 +984,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };

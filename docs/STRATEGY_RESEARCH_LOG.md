@@ -17,6 +17,15 @@
 
 Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
 
+## 2026-07-27 — Live instrument-identity audit
+
+- Mistake corrected: the final server validated candidate prices and positive contract IDs but did not prove that the contract belonged to the candidate symbol. A direct caller could substitute another instrument or mix contracts across bracket legs.
+- Immediately before transmission, the server now requires one shared contract ID across the bracket and verifies it against IBKR's exact-symbol `STK` search result.
+- An unavailable lookup, wrong symbol, wrong security type, different contract, or mixed-contract bracket fails closed.
+- No IBKR lookup, brokerage request, order, strategy evaluation, or market-data load was made during this audit.
+
+Decision: a validated price plan cannot authorize a different security; instrument identity must be broker-confirmed at the final boundary.
+
 ## 2026-07-27 — Live position-size audit
 
 - Mistake corrected: the browser calculated share quantity from account equity and stop distance, but the final server boundary accepted any positive whole-share quantity when all three bracket legs matched.

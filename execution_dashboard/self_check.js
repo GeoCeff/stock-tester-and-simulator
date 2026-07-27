@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -98,6 +98,11 @@ assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.ord
 assert.equal(validateResearchOrder(researchOrder, validatedAgent, NaN, validationNow).ok, false);
 assert.equal(ibkrNetLiquidation({ ok: true, data: { netliquidation: { amount: 123456.78 } } }), 123456.78);
 assert.equal(Number.isNaN(ibkrNetLiquidation({ ok: false, data: { netliquidation: { amount: 123456.78 } } })), true);
+const aaplContract = { ok: true, data: [{ conid: 265598, symbol: "AAPL", secType: "STK" }] };
+const contractOrders = researchOrder.orders.map((order) => ({ ...order, conid: 265598 }));
+assert.equal(validateResearchContract(contractOrders, "AAPL", aaplContract).ok, true);
+assert.equal(validateResearchContract(contractOrders.map((order) => ({ ...order, conid: 272093 })), "AAPL", aaplContract).ok, false);
+assert.equal(validateResearchContract(contractOrders.map((order, index) => ({ ...order, conid: index ? 272093 : 265598 })), "AAPL", aaplContract).ok, false);
 assert.deepEqual(liveReplyIds([{ id: "reply-1", message: ["confirm"] }, { order_id: "not-a-reply" }]), ["reply-1"]);
 assert.equal(agentNewsSnapshot(researchAgent).symbols.AAPL.action, "pass");
 assert.equal(mergeNews({ action: "pass" }, { status: "news_unavailable", items: [], error: "offline" }).action, "news_unavailable");
