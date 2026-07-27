@@ -718,6 +718,27 @@ def run_research_loop(
     usable_length = _common_length(data, universe)
     final_start = _folds(usable_length, folds, warmup)[-1][0]
     common_dates = get_ticker_frame(data, universe[0]).dropna(subset=["Close"]).index[-usable_length:]
+    holdout = {
+        "start": str(common_dates[final_start].date()),
+        "end": str(common_dates[-1].date()),
+        "rows": int(usable_length - final_start),
+    }
+    protocol = {
+        "folds": folds,
+        "warmup": warmup,
+        "cost_bps_per_side": cost_bps_per_side,
+        "gates": gates,
+        "engine_version": EXECUTION_PLAN_VERSION,
+        "candidates": [
+            {"style": candidate["style"], "strategy": candidate["strategy"]}
+            for candidate in candidates
+        ],
+    }
+    holdout["id"] = hashlib.sha256(json.dumps({
+        "window": holdout,
+        "universe": universe,
+        "protocol": protocol,
+    }, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     development_data = data.loc[data.index < common_dates[final_start]]
     development_evaluations = [
         evaluate_candidate(
@@ -885,6 +906,8 @@ def run_research_loop(
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "universe": universe,
+        "holdout": holdout,
+        "research_protocol": protocol,
         "styles": styles,
         "entries": _latest_candidates(data, universe, accepted),
         "shadow_entries": shadow_entries,
@@ -949,6 +972,9 @@ def append_research_history(result, *, path=None, max_records=200):
     path = Path(path or DEFAULT_RESEARCH_HISTORY_PATH)
     record = {
         "created_at": result["created_at"],
+        "data_provenance": result.get("data_provenance", {}),
+        "holdout": result.get("holdout", {}),
+        "research_protocol": result.get("research_protocol", {}),
         "research_notes": result.get("research_notes", {}),
         "paper_evidence": result.get("paper_evidence", {}),
         "shadow_evidence": result.get("shadow_evidence", {}),

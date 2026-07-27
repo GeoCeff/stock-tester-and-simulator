@@ -64,6 +64,16 @@ Decision: use only fully observable fold outcomes; never infer performance from 
 
 Decision: invalid arithmetic fails the run; it is never converted to zero or allowed to bypass a risk threshold.
 
+## 2026-07-27 — Holdout-trial identity audit
+
+- Worked: only development-qualified executable winners touch the final fold, strategy-family mappings prevent simple rename bypasses within a style, and rejected families retain a 90-day cooldown.
+- Evidence gap corrected: published and historical records did not retain the exact holdout window, protocol, candidate set, engine version, gates, or source provenance.
+- Every run now carries a deterministic holdout ID with start/end/rows; protocol captures folds, warmup, costs, gates, engine, and candidates; the runner records the recognized provider and loaded coverage.
+- Repeated runs with the same holdout ID are monitoring observations, not additional independent holdout trials.
+- No hypothesis was exposed during this audit.
+
+Decision: an untouched-holdout claim must be traceable to a specific data window and predeclared protocol.
+
 ## 2026-07-27 — Prospective paper-evidence audit
 
 - Mistake corrected: an unversioned legacy position could inherit the current plan ID and later contribute evidence to rules it did not actually observe. Legacy pending positions now cancel; already-filled legacy records remain isolated as `legacy-unversioned`.

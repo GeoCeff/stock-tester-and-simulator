@@ -169,6 +169,20 @@ def run_once(args):
         cost_bps_per_side=args.cost_bps,
         excluded_holdout_trials=recent_rejected_holdout_trials(),
     )
+    result["data_provenance"] = {
+        key: status.get(key)
+        for key in (
+            "source",
+            "requested_source",
+            "provider_attempts",
+            "date_start",
+            "date_end",
+            "row_count",
+            "loaded_tickers",
+            "unavailable_tickers",
+            "is_demo",
+        )
+    }
     publish_research_result(result)
     news_status = refresh_news()
     apply_news_snapshot(result)

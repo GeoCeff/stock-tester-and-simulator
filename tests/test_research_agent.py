@@ -98,6 +98,11 @@ def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
     assert result["development_diagnostics"][0]["signal_reason"] == "development and internal validation passed"
     assert result["entries"][0]["entry"] > result["entries"][0]["stop"]
     assert result["entries"][0]["target"] > result["entries"][0]["entry"]
+    expected_holdout_start = research_agent._folds(len(index), 4, 200)[-1][0]
+    assert result["holdout"]["start"] == str(index[expected_holdout_start].date())
+    assert result["holdout"]["end"] == str(index[-1].date())
+    assert len(result["holdout"]["id"]) == 16
+    assert result["research_protocol"]["engine_version"] == research_agent.EXECUTION_PLAN_VERSION
 
     model_path = tmp_path / "bot_model_pack.json"
     agent_path = tmp_path / "research_agent.json"
@@ -459,6 +464,9 @@ def test_research_history_is_deduplicated_and_bounded(tmp_path):
     path = tmp_path / "history.jsonl"
     result = {
         "created_at": "2026-07-25T00:00:00Z",
+        "data_provenance": {"source": "Yahoo Finance"},
+        "holdout": {"id": "trial-window"},
+        "research_protocol": {"engine_version": "daily-bars-test"},
         "research_notes": {"what_worked": [], "what_failed": ["none passed"]},
         "paper_evidence": {"status": "warming_up"},
         "entries": [],
@@ -474,6 +482,8 @@ def test_research_history_is_deduplicated_and_bounded(tmp_path):
     assert [row["created_at"] for row in records] == ["2026-07-26T00:00:00Z", "2026-07-27T00:00:00Z"]
     assert records[-1]["styles"]["SWING_20D"]["holdout_exposed"] is True
     assert records[-1]["styles"]["SWING_20D"]["family"] == "trend"
+    assert records[-1]["holdout"]["id"] == "trial-window"
+    assert records[-1]["data_provenance"]["source"] == "Yahoo Finance"
 
 
 def test_recent_rejected_holdout_trials_ignores_passes_and_expired_trials(tmp_path):
