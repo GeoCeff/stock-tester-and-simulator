@@ -35,14 +35,20 @@ def test_low_volatility_trend_waits_for_below_normal_volatility():
     index = pd.date_range("2024-01-01", periods=420, freq="B")
     returns = pd.Series(([0.02, -0.018] * 150) + ([0.001] * 120), index=index)
     price = 100 * (1 + returns).cumprod()
+    cutoff = 380
 
     signal = LowVolatilityTrendStrategy().generate_signals(
         price,
         {"ma200": price.rolling(200).mean()},
     )
+    truncated_signal = LowVolatilityTrendStrategy().generate_signals(
+        price.iloc[:cutoff],
+        {"ma200": price.iloc[:cutoff].rolling(200).mean()},
+    )
 
     assert signal.iloc[:200].sum() == 0
     assert signal.iloc[-1] == 1
+    assert signal.iloc[:cutoff].equals(truncated_signal)
 
 
 def test_breadth_confirmed_trend_requires_majority_participation():
