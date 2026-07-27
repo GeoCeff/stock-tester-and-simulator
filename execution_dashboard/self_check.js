@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -59,7 +59,7 @@ const modelPack = {
 };
 assert.equal(validateModelPack(modelPack).ok, true);
 assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SWING_5D: { ...modelStyle, enabled: true, risk_pct: 2 } } }).ok, false);
-const researchAgent = { schema_version: 1, created_at: "2026-07-25T00:00:00Z", entries: [{ symbol: "AAPL", side: "LONG", style: "SWING_5D", signal_date: "2026-07-25", entry: 200, stop: 190, target: 220 }] };
+const researchAgent = { schema_version: 1, created_at: "2026-07-25T00:00:00Z", entries: [{ symbol: "AAPL", side: "LONG", style: "SWING_5D", signal_date: "2026-07-25", entry: 200, stop: 190, target: 220, risk_pct: 0.005 }] };
 assert.equal(validateResearchAgent(researchAgent).ok, true);
 assert.equal(validateResearchAgent({ ...researchAgent, entries: [{ ...researchAgent.entries[0], stop: 210 }] }).ok, false);
 const validatedCandidate = {
@@ -84,15 +84,20 @@ const researchOrder = {
     { side: "SELL", orderType: "STP", auxPrice: 190, quantity: 2, parentId: "PARENT" }
   ]
 };
-assert.equal(validateResearchOrder(researchOrder, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, true);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, paper_evidence: { status: "warming_up", validated_plans: [] } }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
-assert.equal(validateResearchOrder({ ...researchOrder, planId: "other-plan" }, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, false);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [], shadow_entries: [validatedCandidate] }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
-assert.equal(validateResearchOrder(researchOrder, validatedAgent, Date.parse("2026-08-01T00:00:00Z")).ok, false);
-assert.equal(validateResearchOrder({ ...researchOrder, planId: "" }, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, false);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, signal_date: "2026-07-01" }] }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, news_created_at: "2026-07-24T00:00:00Z" }] }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
-assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, false);
+const validationNow = Date.parse("2026-07-26T00:00:00Z");
+assert.equal(validateResearchOrder(researchOrder, validatedAgent, 100000, validationNow).ok, true);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, paper_evidence: { status: "warming_up", validated_plans: [] } }, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, planId: "other-plan" }, validatedAgent, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [], shadow_entries: [validatedCandidate] }, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, validatedAgent, 100000, Date.parse("2026-08-01T00:00:00Z")).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, planId: "" }, validatedAgent, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, signal_date: "2026-07-01" }] }, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, news_created_at: "2026-07-24T00:00:00Z" }] }, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, quantity: 51 })) }, validatedAgent, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, validatedAgent, NaN, validationNow).ok, false);
+assert.equal(ibkrNetLiquidation({ ok: true, data: { netliquidation: { amount: 123456.78 } } }), 123456.78);
+assert.equal(Number.isNaN(ibkrNetLiquidation({ ok: false, data: { netliquidation: { amount: 123456.78 } } })), true);
 assert.deepEqual(liveReplyIds([{ id: "reply-1", message: ["confirm"] }, { order_id: "not-a-reply" }]), ["reply-1"]);
 assert.equal(agentNewsSnapshot(researchAgent).symbols.AAPL.action, "pass");
 assert.equal(mergeNews({ action: "pass" }, { status: "news_unavailable", items: [], error: "offline" }).action, "news_unavailable");

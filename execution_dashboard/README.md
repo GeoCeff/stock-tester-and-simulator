@@ -98,7 +98,7 @@ Then:
 5. Type `LIVE SYMBOL` in the ticket, for example `LIVE AAPL`.
 6. Click `Transmit Live`.
 
-Live submission remains blocked unless the server was started with `ENABLE_LIVE_ORDERS=1`, IBKR is authenticated, an account is selected, conid is resolved, readiness gates pass, the typed confirmation matches the selected symbol, and the backend order-ticket validator accepts the ticket. Every live-order intent/response is appended to `data/audit.jsonl`.
+Live submission remains blocked unless the server was started with `ENABLE_LIVE_ORDERS=1`, IBKR is authenticated, an account is selected, conid is resolved, readiness gates pass, the typed confirmation matches the selected symbol, and the backend order-ticket validator accepts the ticket. The backend fetches current IBKR net liquidation and rejects missing equity or any quantity whose stop risk exceeds the published candidate risk budget. Every live-order intent/response is appended to `data/audit.jsonl`.
 
 Full-auto mode is disabled by default. To unlock it intentionally:
 

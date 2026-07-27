@@ -535,14 +535,16 @@ function validateResearchAgent(result) {
     const price = Number(entry.entry);
     const stop = Number(entry.stop);
     const target = Number(entry.target);
+    const riskPct = Number(entry.risk_pct ?? entry.riskPct);
     if (![price, stop, target].every(Number.isFinite) || stop <= 0 || stop >= price || target <= price) {
       return { ok: false, error: `${label}: invalid bracket prices` };
     }
+    if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > 0.1) return { ok: false, error: `${label}: invalid risk_pct` };
   }
   return { ok: true };
 }
 
-function validateResearchOrder(body, agent, now = Date.now()) {
+function validateResearchOrder(body, agent, accountEquity, now = Date.now()) {
   const validation = validateResearchAgent(agent);
   if (!validation.ok) return validation;
   const createdAt = Date.parse(agent.created_at || agent.createdAt || "");
@@ -586,7 +588,21 @@ function validateResearchOrder(body, agent, now = Date.now()) {
   ) {
     return { ok: false, error: "order bracket differs from the validated research candidate" };
   }
+  const equity = Number(accountEquity);
+  const quantity = Number(entry.quantity);
+  const stopRisk = quantity * (Number(candidate.entry) - Number(candidate.stop));
+  const riskBudget = equity * Number(candidate.risk_pct ?? candidate.riskPct);
+  if (!Number.isFinite(equity) || equity <= 0) return { ok: false, error: "current IBKR net liquidation value required" };
+  if (!Number.isFinite(stopRisk) || stopRisk > riskBudget + 0.01) {
+    return { ok: false, error: "order quantity exceeds the validated research risk budget" };
+  }
   return { ok: true, candidate };
+}
+
+function ibkrNetLiquidation(result) {
+  const value = result?.data?.netliquidation;
+  const amount = Number(value?.amount ?? value);
+  return result?.ok && Number.isFinite(amount) && amount > 0 ? amount : NaN;
 }
 
 function liveReplyIds(value, ids = []) {
@@ -875,7 +891,12 @@ async function handleApi(req, res, url) {
       appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: validation.error });
       return send(res, 400, validation);
     }
-    const researchValidation = validateResearchOrder(body, readJsonFile(RESEARCH_AGENT_FILE, null));
+    const accountSummary = await ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/summary`);
+    const researchValidation = validateResearchOrder(
+      body,
+      readJsonFile(RESEARCH_AGENT_FILE, null),
+      ibkrNetLiquidation(accountSummary)
+    );
     if (!researchValidation.ok) {
       appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: researchValidation.error });
       return send(res, 403, researchValidation);
@@ -941,4 +962,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };

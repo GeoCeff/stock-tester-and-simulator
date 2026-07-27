@@ -17,6 +17,15 @@
 
 Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
 
+## 2026-07-27 — Live position-size audit
+
+- Mistake corrected: the browser calculated share quantity from account equity and stop distance, but the final server boundary accepted any positive whole-share quantity when all three bracket legs matched.
+- Live validation now fetches current net liquidation from the selected IBKR account and independently recomputes stop risk from the published candidate entry, stop, and `risk_pct`.
+- Missing brokerage equity and quantity above the exact candidate risk budget fail closed. Dashboard-persisted equity is not trusted for this decision.
+- No brokerage request, order, strategy evaluation, or market-data load was made during this audit.
+
+Decision: browser sizing is advisory; the server must prove account-backed position risk immediately before transmission.
+
 ## 2026-07-27 — News-gate safety audit
 
 - Mistake corrected: a failed refresh could reuse a recent news snapshot belonging to a different exact candidate. Snapshots now fail closed unless they are at most 30 minutes old and match the current symbol, style, strategy, signal date, entry, stop, and target.
