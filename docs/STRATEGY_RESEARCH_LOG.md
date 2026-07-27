@@ -17,6 +17,15 @@
 
 Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
 
+## 2026-07-27 — Live order-semantics audit
+
+- Mistake corrected: the server checked bracket prices and types but accepted any generally supported time-in-force, allowing a swing bracket to be changed from `GTC` to `IOC`.
+- Mistake corrected: the server forwarded the caller's original order objects after validation, so additional unreviewed IBKR fields could survive into the brokerage request.
+- Live validation now requires `DAY` only for day trades and `GTC` for every longer style, requires three unique bounded client IDs, and rebuilds the transmitted bracket from the validated field allowlist.
+- No IBKR request, order, strategy evaluation, or market-data load was made during this audit.
+
+Decision: validation and transmission must describe the same canonical order; unchecked fields never reach the broker.
+
 ## 2026-07-27 — Live instrument-identity audit
 
 - Mistake corrected: the final server validated candidate prices and positive contract IDs but did not prove that the contract belonged to the candidate symbol. A direct caller could substitute another instrument or mix contracts across bracket legs.

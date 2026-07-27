@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, canonicalResearchOrders, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -79,9 +79,9 @@ const researchOrder = {
   style: "SWING_5D",
   planId: "exact-plan",
   orders: [
-    { side: "BUY", orderType: "LMT", price: 200, quantity: 2, cOID: "PARENT" },
-    { side: "SELL", orderType: "LMT", price: 220, quantity: 2, parentId: "PARENT" },
-    { side: "SELL", orderType: "STP", auxPrice: 190, quantity: 2, parentId: "PARENT" }
+    { side: "BUY", orderType: "LMT", price: 200, quantity: 2, tif: "GTC", cOID: "PARENT" },
+    { side: "SELL", orderType: "LMT", price: 220, quantity: 2, tif: "GTC", parentId: "PARENT", cOID: "TARGET" },
+    { side: "SELL", orderType: "STP", auxPrice: 190, quantity: 2, tif: "GTC", parentId: "PARENT", cOID: "STOP" }
   ]
 };
 const validationNow = Date.parse("2026-07-26T00:00:00Z");
@@ -95,6 +95,7 @@ assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: 
 assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, news_created_at: "2026-07-24T00:00:00Z" }] }, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, quantity: 51 })) }, validatedAgent, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, tif: "IOC" })) }, validatedAgent, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder(researchOrder, validatedAgent, NaN, validationNow).ok, false);
 assert.equal(ibkrNetLiquidation({ ok: true, data: { netliquidation: { amount: 123456.78 } } }), 123456.78);
 assert.equal(Number.isNaN(ibkrNetLiquidation({ ok: false, data: { netliquidation: { amount: 123456.78 } } })), true);
@@ -103,6 +104,7 @@ const contractOrders = researchOrder.orders.map((order) => ({ ...order, conid: 2
 assert.equal(validateResearchContract(contractOrders, "AAPL", aaplContract).ok, true);
 assert.equal(validateResearchContract(contractOrders.map((order) => ({ ...order, conid: 272093 })), "AAPL", aaplContract).ok, false);
 assert.equal(validateResearchContract(contractOrders.map((order, index) => ({ ...order, conid: index ? 272093 : 265598 })), "AAPL", aaplContract).ok, false);
+assert.equal("outsideRTH" in canonicalResearchOrders(contractOrders.map((order) => ({ ...order, outsideRTH: true })))[0], false);
 assert.deepEqual(liveReplyIds([{ id: "reply-1", message: ["confirm"] }, { order_id: "not-a-reply" }]), ["reply-1"]);
 assert.equal(agentNewsSnapshot(researchAgent).symbols.AAPL.action, "pass");
 assert.equal(mergeNews({ action: "pass" }, { status: "news_unavailable", items: [], error: "offline" }).action, "news_unavailable");

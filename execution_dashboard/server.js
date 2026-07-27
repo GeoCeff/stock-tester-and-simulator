@@ -578,13 +578,18 @@ function validateResearchOrder(body, agent, accountEquity, now = Date.now()) {
   const orders = body.orders;
   if (!Array.isArray(orders) || orders.length !== 3) return { ok: false, error: "exact three-order bracket required" };
   const [entry, target, stop] = orders;
+  const tif = candidate.style === "DAY_TRADE" ? "DAY" : "GTC";
+  const clientIds = [entry.cOID, target.cOID, stop.cOID];
   const priceMatches = (actual, expected) => Math.abs(Number(actual) - Number(expected)) <= 0.011;
   if (
     entry.side !== "BUY" || entry.orderType !== "LMT" || !priceMatches(entry.price, candidate.entry)
     || target.side !== "SELL" || target.orderType !== "LMT" || !priceMatches(target.price, candidate.target)
     || stop.side !== "SELL" || stop.orderType !== "STP" || !priceMatches(stop.auxPrice, candidate.stop)
+    || orders.some((order) => order.tif !== tif)
     || target.quantity !== entry.quantity || stop.quantity !== entry.quantity
     || !entry.cOID || target.parentId !== entry.cOID || stop.parentId !== entry.cOID
+    || clientIds.some((id) => typeof id !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(id))
+    || new Set(clientIds).size !== 3
   ) {
     return { ok: false, error: "order bracket differs from the validated research candidate" };
   }
@@ -615,6 +620,14 @@ function validateResearchContract(orders, symbol, result) {
     && String(row.secType || "").toUpperCase() === "STK"
   );
   return match ? { ok: true } : { ok: false, error: "order contract does not match the validated research symbol" };
+}
+
+function canonicalResearchOrders([entry, target, stop]) {
+  return [
+    { conid: Number(entry.conid), side: "BUY", orderType: "LMT", price: Number(entry.price), quantity: Number(entry.quantity), tif: entry.tif, cOID: entry.cOID },
+    { conid: Number(target.conid), side: "SELL", orderType: "LMT", price: Number(target.price), quantity: Number(target.quantity), tif: target.tif, parentId: entry.cOID, cOID: target.cOID },
+    { conid: Number(stop.conid), side: "SELL", orderType: "STP", auxPrice: Number(stop.auxPrice), quantity: Number(stop.quantity), tif: stop.tif, parentId: entry.cOID, cOID: stop.cOID }
+  ];
 }
 
 function liveReplyIds(value, ids = []) {
@@ -923,8 +936,9 @@ async function handleApi(req, res, url) {
       appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: contractValidation.error });
       return send(res, 403, contractValidation);
     }
-    const intent = appendAudit({ type: "live_order_intent", accountId, setupId: body.setupId, orders });
-    const result = await ibkrRequest("POST", `iserver/account/${encodeURIComponent(accountId)}/orders`, orders);
+    const brokerOrders = canonicalResearchOrders(orders);
+    const intent = appendAudit({ type: "live_order_intent", accountId, setupId: body.setupId, orders: brokerOrders });
+    const result = await ibkrRequest("POST", `iserver/account/${encodeURIComponent(accountId)}/orders`, brokerOrders);
     rememberLiveReplies(result);
     appendAudit({ type: "live_order_response", accountId, setupId: body.setupId, intentTime: intent.time, result });
     return send(res, 200, result);
@@ -984,4 +998,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, canonicalResearchOrders, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
