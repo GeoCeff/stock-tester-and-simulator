@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateAutoRisk, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -50,6 +50,7 @@ assert.equal(validateLiveOrders([{ conid: 0, side: "BUY", orderType: "LMT", pric
 assert.equal(validateLiveOrders([{ conid: 265598, side: "BUY", orderType: "STOP_LIMIT", price: 192.25, quantity: 3, tif: "DAY" }]).ok, false);
 assert.equal(validateLiveOrders([{ conid: 265598, side: "BUY", orderType: "STOP_LIMIT", price: 192.25, auxPrice: 191.75, quantity: 3, tif: "DAY" }]).ok, true);
 assert.equal(validateAutoOrder({ auto: true }).ok, process.env.ENABLE_FULL_AUTO === "1");
+assert.equal(validateAutoOrder({ auto: "false", symbol: "AAPL", confirmation: "LIVE AAPL" }).ok, false);
 assert.equal(validateAutoOrder({ symbol: "AAPL", auto: false }).ok, false);
 assert.equal(validateAutoOrder({ symbol: "AAPL", auto: false, confirmation: "LIVE AAPL" }).ok, true);
 const modelStyle = { enabled: false, holding_period: 0, min_probability: 0, stop_atr: 0, target_r: 0, risk_pct: 0, acceptance: { status: "reject" } };
@@ -107,6 +108,21 @@ assert.equal(validateResearchContract(contractOrders, "AAPL", aaplContract).ok, 
 assert.equal(validateResearchContract(contractOrders.map((order) => ({ ...order, conid: 272093 })), "AAPL", aaplContract).ok, false);
 assert.equal(validateResearchContract(contractOrders.map((order, index) => ({ ...order, conid: index ? 272093 : 265598 })), "AAPL", aaplContract).ok, false);
 assert.equal("outsideRTH" in canonicalResearchOrders(contractOrders.map((order) => ({ ...order, outsideRTH: true })))[0], false);
+const autoBody = { auto: true, accountId: "U123", orders: [{ conid: 265598, quantity: 2, price: 200 }] };
+const autoSources = {
+  accountSummary: { ok: true, data: { netliquidation: { amount: 100000 }, availablefunds: { amount: 50000 } } },
+  pnl: { ok: true, data: { upnl: { "U123.Core": { dpl: -100, nl: 100000 } } } },
+  positions: { ok: true, data: [] },
+  openOrders: { ok: true, data: { orders: [] } },
+  quote: { ok: true, data: [{ conid: 265598, 84: 199.9, 86: 200.1 }] },
+  audit: []
+};
+assert.equal(validateAutoRisk(autoBody, autoSources, validationNow).ok, true);
+assert.equal(validateAutoRisk(autoBody, { ...autoSources, pnl: { ok: true, data: { upnl: { "U123.Core": { dpl: -2000, nl: 100000 } } } } }, validationNow).ok, false);
+assert.equal(validateAutoRisk(autoBody, { ...autoSources, accountSummary: { ok: true, data: { netliquidation: { amount: 100000 }, availablefunds: { amount: 100 } } } }, validationNow).ok, false);
+assert.equal(validateAutoRisk(autoBody, { ...autoSources, positions: { ok: true, data: [{ conid: 265598, position: 1 }] } }, validationNow).ok, false);
+assert.equal(validateAutoRisk(autoBody, { ...autoSources, quote: { ok: true, data: [{ conid: 265598, 84: 199, 86: 201 }] } }, validationNow).ok, false);
+assert.equal(validateAutoRisk(autoBody, { ...autoSources, audit: [{ type: "live_order_intent", auto: true, accountId: "U123", time: "2026-07-26T00:00:00Z" }] }, validationNow).ok, false);
 assert.equal(agentNewsSnapshot(researchAgent).symbols.AAPL.action, "pass");
 assert.equal(mergeNews({ action: "pass" }, { status: "news_unavailable", items: [], error: "offline" }).action, "news_unavailable");
 assert.equal(mergeNews({ action: "pass" }, { status: "ok", items: [{ sentiment: "negative" }], error: "" }).action, "reduce");

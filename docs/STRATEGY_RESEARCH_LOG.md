@@ -17,6 +17,16 @@
 
 Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
 
+## 2026-07-27 — Full-auto trust-boundary audit
+
+- Mistake corrected: full auto required a server startup flag, but daily loss, trade count, duplicate position/order, quote spread, available funds, and in-flight checks existed only in browser state.
+- The server now obtains fresh IBKR account P&L, net liquidation, available funds, first-page positions, open orders, and bid/ask immediately before an automated submission. Missing or incomplete evidence fails closed.
+- Hard server limits: daily P&L may not be at or below -2% of the lower current equity reading, bid/ask spread may not exceed 20 bps, the contract may have no existing position or active order, confirmed funds must cover entry notional, only one automated intent is allowed per New York market day, and concurrent automated requests are rejected.
+- A full 100-row position page is treated as incomplete rather than assuming there is no next page. Browser gates remain additional restrictions, not substitutes for this server policy.
+- No IBKR request, order, strategy evaluation, or market-data load was made during this audit.
+
+Decision: an automation startup flag grants no exemption from broker-backed risk checks; uncertainty blocks the order.
+
 ## 2026-07-27 — Live confirmation audit
 
 - Mistake corrected: `LIVE SYMBOL` was enforced only by browser JavaScript, while the server accepted an otherwise valid manual order without proof of that per-trade confirmation.

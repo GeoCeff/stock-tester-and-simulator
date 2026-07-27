@@ -21,6 +21,9 @@ const RESEARCH_FILE = path.join(DATA_DIR, "market_research_snapshot.json");
 const RESEARCH_AGENT_MAX_AGE_MS = 86400000;
 const RESEARCH_SIGNAL_MAX_AGE_MS = 5 * 86400000;
 const RESEARCH_NEWS_MAX_AGE_MS = 86400000;
+const AUTO_MAX_DAILY_LOSS_PCT = 0.02;
+const AUTO_MAX_SPREAD_BPS = 20;
+let autoOrderInFlight = false;
 const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US";
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -464,6 +467,7 @@ function validateLiveOrders(orders) {
 }
 
 function validateAutoOrder(body) {
+  if (typeof body.auto !== "boolean") return { ok: false, status: 400, error: "auto must be boolean" };
   if (body.auto && !FULL_AUTO_ENABLED) return { ok: false, status: 403, error: "full auto disabled; restart with ENABLE_FULL_AUTO=1" };
   const symbol = String(body.symbol || "").toUpperCase();
   if (!body.auto && body.confirmation !== `LIVE ${symbol}`) return { ok: false, status: 403, error: `type LIVE ${symbol} to confirm this live order` };
@@ -609,6 +613,62 @@ function ibkrNetLiquidation(result) {
   const value = result?.data?.netliquidation;
   const amount = Number(value?.amount ?? value);
   return result?.ok && Number.isFinite(amount) && amount > 0 ? amount : NaN;
+}
+
+function marketDayKey(value) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
+}
+
+function ibkrRows(result, key) {
+  if (!result?.ok) return null;
+  if (Array.isArray(result.data)) return result.data;
+  return Array.isArray(result.data?.[key]) ? result.data[key] : null;
+}
+
+function validateAutoRisk(body, sources, now = Date.now()) {
+  if (!body.auto) return { ok: true };
+  const accountId = String(body.accountId || "");
+  const entry = body.orders?.[0] || {};
+  const conid = Number(entry.conid);
+  const equity = ibkrNetLiquidation(sources.accountSummary);
+  const available = Number(sources.accountSummary?.data?.availablefunds?.amount);
+  const core = sources.pnl?.ok ? sources.pnl.data?.upnl?.[`${accountId}.Core`] : null;
+  const pnlEquity = Number(core?.nl);
+  if (!Number.isFinite(equity) || !Number.isFinite(pnlEquity) || pnlEquity <= 0 || !Number.isFinite(Number(core?.dpl))) {
+    return { ok: false, error: "current IBKR auto-risk P&L required" };
+  }
+  if (Number(core.dpl) <= -Math.min(equity, pnlEquity) * AUTO_MAX_DAILY_LOSS_PCT) {
+    return { ok: false, error: "automated trading daily loss limit reached" };
+  }
+  if (!Number.isFinite(available) || available < Number(entry.quantity) * Number(entry.price)) return { ok: false, error: "insufficient confirmed available funds" };
+
+  const positions = ibkrRows(sources.positions, "positions");
+  const openOrders = ibkrRows(sources.openOrders, "orders");
+  const quotes = ibkrRows(sources.quote, "quotes");
+  if (!positions || positions.length >= 100 || !openOrders || !quotes) return { ok: false, error: "complete IBKR auto-risk state required" };
+  if (positions.some((row) => Number(row.conid ?? row.contractId) === conid && Number(row.position ?? row.quantity ?? row.qty) !== 0)) {
+    return { ok: false, error: "existing IBKR position in symbol" };
+  }
+  if (openOrders.some((row) =>
+    Number(row.conid ?? row.contractId) === conid
+    && !/filled|cancelled|inactive/i.test(String(row.status || row.order_status || ""))
+  )) return { ok: false, error: "existing IBKR open order in symbol" };
+
+  const quote = quotes.find((row) => Number(row.conid ?? row.conidEx ?? row._conid) === conid);
+  const bid = Number(quote?.[84] ?? quote?.bid);
+  const ask = Number(quote?.[86] ?? quote?.ask);
+  const spreadBps = bid > 0 && ask >= bid ? (ask - bid) / ((ask + bid) / 2) * 10000 : Infinity;
+  if (!Number.isFinite(spreadBps) || spreadBps > AUTO_MAX_SPREAD_BPS) return { ok: false, error: "current IBKR spread is unavailable or too wide" };
+
+  const today = marketDayKey(now);
+  const autoIntents = (sources.audit || []).filter((event) =>
+    event.type === "live_order_intent"
+    && event.auto === true
+    && event.accountId === accountId
+    && Number.isFinite(Date.parse(event.time))
+    && marketDayKey(Date.parse(event.time)) === today
+  ).length;
+  return autoIntents < 1 ? { ok: true } : { ok: false, error: "automated trade limit reached for the market day" };
 }
 
 function validateResearchContract(orders, symbol, result) {
@@ -895,7 +955,7 @@ async function handleApi(req, res, url) {
     const symbol = String(body.symbol || "").toUpperCase();
     const autoValidation = validateAutoOrder(body);
     if (!autoValidation.ok) {
-      appendAudit({ type: "auto_order_rejected", accountId, setupId: body.setupId, reason: "full auto disabled" });
+      appendAudit({ type: "auto_order_rejected", accountId, setupId: body.setupId, reason: autoValidation.error });
       return send(res, autoValidation.status, { ok: false, error: autoValidation.error });
     }
     if (!accountId) return send(res, 400, { ok: false, error: "accountId required" });
@@ -905,29 +965,49 @@ async function handleApi(req, res, url) {
       appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: validation.error });
       return send(res, 400, validation);
     }
-    const [accountSummary, contractSearch] = await Promise.all([
-      ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/summary`),
-      ibkrRequest("POST", "iserver/secdef/search", { symbol, name: false, secType: "STK" })
-    ]);
-    const researchValidation = validateResearchOrder(
-      body,
-      readJsonFile(RESEARCH_AGENT_FILE, null),
-      ibkrNetLiquidation(accountSummary)
-    );
-    if (!researchValidation.ok) {
-      appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: researchValidation.error });
-      return send(res, 403, researchValidation);
+    if (body.auto && autoOrderInFlight) return send(res, 409, { ok: false, error: "automated order already in flight" });
+    if (body.auto) autoOrderInFlight = true;
+    try {
+      const [accountSummary, contractSearch] = await Promise.all([
+        ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/summary`),
+        ibkrRequest("POST", "iserver/secdef/search", { symbol, name: false, secType: "STK" })
+      ]);
+      const researchValidation = validateResearchOrder(
+        body,
+        readJsonFile(RESEARCH_AGENT_FILE, null),
+        ibkrNetLiquidation(accountSummary)
+      );
+      if (!researchValidation.ok) {
+        appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: researchValidation.error });
+        return send(res, 403, researchValidation);
+      }
+      const contractValidation = validateResearchContract(orders, researchValidation.candidate.symbol, contractSearch);
+      if (!contractValidation.ok) {
+        appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: contractValidation.error });
+        return send(res, 403, contractValidation);
+      }
+      if (body.auto) {
+        const conid = Number(orders[0].conid);
+        const [pnl, positions, openOrders, quote] = await Promise.all([
+          ibkrRequest("GET", "iserver/account/pnl/partitioned"),
+          ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/positions/0`),
+          ibkrRequest("GET", `iserver/account/orders?force=true&accountId=${encodeURIComponent(accountId)}`),
+          ibkrRequest("GET", `iserver/marketdata/snapshot?conids=${conid}&fields=84,86`)
+        ]);
+        const autoRisk = validateAutoRisk(body, { accountSummary, pnl, positions, openOrders, quote, audit: readAudit(1000) });
+        if (!autoRisk.ok) {
+          appendAudit({ type: "auto_order_rejected", accountId, setupId: body.setupId, reason: autoRisk.error });
+          return send(res, 403, autoRisk);
+        }
+      }
+      const brokerOrders = canonicalResearchOrders(orders);
+      const intent = appendAudit({ type: "live_order_intent", accountId, setupId: body.setupId, auto: body.auto === true, orders: brokerOrders });
+      const result = await ibkrRequest("POST", `iserver/account/${encodeURIComponent(accountId)}/orders`, brokerOrders);
+      appendAudit({ type: "live_order_response", accountId, setupId: body.setupId, intentTime: intent.time, result });
+      return send(res, 200, result);
+    } finally {
+      if (body.auto) autoOrderInFlight = false;
     }
-    const contractValidation = validateResearchContract(orders, researchValidation.candidate.symbol, contractSearch);
-    if (!contractValidation.ok) {
-      appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: contractValidation.error });
-      return send(res, 403, contractValidation);
-    }
-    const brokerOrders = canonicalResearchOrders(orders);
-    const intent = appendAudit({ type: "live_order_intent", accountId, setupId: body.setupId, orders: brokerOrders });
-    const result = await ibkrRequest("POST", `iserver/account/${encodeURIComponent(accountId)}/orders`, brokerOrders);
-    appendAudit({ type: "live_order_response", accountId, setupId: body.setupId, intentTime: intent.time, result });
-    return send(res, 200, result);
   }
   return send(res, 404, { ok: false, error: "unknown api route" });
 }
@@ -969,4 +1049,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateAutoRisk, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };

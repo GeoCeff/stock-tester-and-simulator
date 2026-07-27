@@ -106,7 +106,7 @@ Full-auto mode is disabled by default. To unlock it intentionally:
 .\start_full_auto_dashboard.ps1
 ```
 
-Stop the safe server first because this uses the same local port. Then sync IBKR, set bot mode to `FULL_AUTO`, keep IBKR mode on `Live confirm`, set daily stops, and turn `Auto Scout On`. The server still rejects automated live orders unless `ENABLE_FULL_AUTO=1` is active.
+Stop the safe server first because this uses the same local port. Then sync IBKR, set bot mode to `FULL_AUTO`, keep IBKR mode on `Live confirm`, set daily stops, and turn `Auto Scout On`. The server still rejects automated live orders unless `ENABLE_FULL_AUTO=1` is active and it can independently confirm current IBKR P&L, net liquidation, available funds, positions, open orders, and bid/ask spread. It permits at most one automated intent per New York market day and rejects concurrent requests.
 
 Added validation layers:
 
@@ -131,7 +131,7 @@ IBKR reality check:
 
 - Safe mode (`start_dashboard.ps1`) never submits live IBKR orders.
 - Live mode (`start_live_dashboard.ps1`) can submit real IBKR stock bracket orders through Client Portal Gateway after all dashboard and server confirmations pass.
-- Full-auto mode (`start_full_auto_dashboard.ps1`) can submit real IBKR stock bracket orders from Auto Scout without typed per-trade confirmation after all full-auto locks and risk gates pass.
+- Full-auto mode (`start_full_auto_dashboard.ps1`) can submit real IBKR stock bracket orders from Auto Scout without typed per-trade confirmation only after the server's broker-backed daily-loss, funding, duplicate-position/order, spread, concurrency, and daily-count gates pass.
 - Use exported plans for manual review in Trader Workstation whenever you do not want the app to transmit.
 - Click `Sync IBKR` to import positions, open orders, and recent trades through Client Portal Gateway, or import CSVs manually if the gateway is unavailable.
 - Test every order type and bracket behavior in IBKR paper/live-small size before scaling; IBKR order behavior can vary by account permission, market session, route, and instrument.
