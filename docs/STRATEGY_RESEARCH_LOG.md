@@ -17,6 +17,15 @@
 
 Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
 
+## 2026-07-27 — News-gate safety audit
+
+- Mistake corrected: a failed refresh could reuse a recent news snapshot belonging to a different exact plan. Snapshots now fail closed unless they are at most 30 minutes old and carry the current `plan_id`.
+- Mistake corrected: AI research could replace an existing `reduce`, `reject`, or `news_unavailable` action with `pass`. AI may now preserve or tighten the deterministic gate, never relax it.
+- Worked: relevant headlines already require parseable publication times, reject future timestamps, expire after three days, and can only reduce a technical candidate rather than create one.
+- No strategy or market-data evaluation was run during this audit.
+
+Decision: retain news as a freshness-bound execution risk gate, never as evidence of strategy profitability or a source of trade signals.
+
 ## 2026-07-25 — Real-data baseline and evidence correction
 
 - Scope: 20 liquid US stocks, eight years of Yahoo Finance daily bars, five walk-forward folds, and 10 bps cost per side.

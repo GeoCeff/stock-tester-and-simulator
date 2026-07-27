@@ -17,6 +17,7 @@ from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, DEFAULT_SH
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
 NEWS_SNAPSHOT_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "market_research_snapshot.json"
 WATCH_LOCK_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "research_agent.lock"
+NEWS_SNAPSHOT_MAX_AGE = timedelta(minutes=30)
 
 
 def acquire_watch_lock(path=WATCH_LOCK_PATH):
@@ -56,22 +57,33 @@ def refresh_news():
         return f"News gate unavailable: {error}"
 
 
-def apply_news_snapshot(result):
+def apply_news_snapshot(result, now=None):
+    now = now or datetime.now(timezone.utc)
     try:
         snapshot = json.loads(NEWS_SNAPSHOT_PATH.read_text(encoding="utf-8"))
         symbols = snapshot["symbols"]
+        if not isinstance(symbols, dict):
+            raise TypeError("news symbols must be an object")
+        created_at = datetime.fromisoformat(snapshot["created_at"].replace("Z", "+00:00"))
+        if created_at > now + timedelta(minutes=5) or now - created_at > NEWS_SNAPSHOT_MAX_AGE:
+            raise ValueError("news snapshot is stale")
         news_version = ":".join(filter(None, [
             snapshot.get("research_version", "news-unversioned"),
             snapshot.get("ai_status", "ai-unavailable"),
             snapshot.get("ai_model", ""),
         ]))
-    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         symbols = {}
         news_version = "news-unavailable"
     result["news_version"] = news_version
     for entry in result["entries"]:
         news = symbols.get(entry["symbol"], {})
+        candidate = news.get("candidate") if isinstance(news, dict) else None
+        if not entry.get("plan_id") or not isinstance(candidate, dict) or candidate.get("plan_id") != entry["plan_id"]:
+            news = {}
         action = news.get("action", "news_unavailable")
+        if action not in {"pass", "reduce", "reject"} or action == "pass" and news.get("news_status") != "ok":
+            action = "news_unavailable"
         entry.update({
             "news_action": action,
             "news_status": news.get("news_status", "news_unavailable"),

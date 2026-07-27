@@ -595,20 +595,45 @@ def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):
 
 def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
     path = tmp_path / "news.json"
-    path.write_text(json.dumps({"research_version": "test-news-v1", "ai_status": "openai_unavailable", "symbols": {"TEST": {
+    path.write_text(json.dumps({"created_at": "2026-07-27T10:00:00Z", "research_version": "test-news-v1", "ai_status": "openai_unavailable", "symbols": {"TEST": {
         "action": "reduce",
         "news_status": "ok",
         "news": [{"title": "Negative headline"}],
         "reasons": ["negative headline risk"],
+        "candidate": {"plan_id": "current-plan"},
     }}}), encoding="utf-8")
     monkeypatch.setattr(research_runner, "NEWS_SNAPSHOT_PATH", path)
-    result = {"entries": [{"symbol": "TEST"}]}
+    result = {"entries": [{"symbol": "TEST", "plan_id": "current-plan"}]}
 
-    research_runner.apply_news_snapshot(result)
+    research_runner.apply_news_snapshot(result, now=pd.Timestamp("2026-07-27T10:05:00Z").to_pydatetime())
 
     assert result["entries"][0]["status"] == "PAPER_CANDIDATE_REDUCED"
     assert result["entries"][0]["news_action"] == "reduce"
     assert result["entries"][0]["news_version"] == "test-news-v1:openai_unavailable"
+
+
+def test_news_snapshot_cannot_approve_a_stale_or_different_plan(monkeypatch, tmp_path):
+    path = tmp_path / "news.json"
+    snapshot = {
+        "created_at": "2026-07-27T09:00:00Z",
+        "symbols": {"TEST": {"action": "pass", "candidate": {"plan_id": "current-plan"}}},
+    }
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    monkeypatch.setattr(research_runner, "NEWS_SNAPSHOT_PATH", path)
+    now = pd.Timestamp("2026-07-27T10:00:00Z").to_pydatetime()
+
+    stale = {"entries": [{"symbol": "TEST", "plan_id": "current-plan"}]}
+    research_runner.apply_news_snapshot(stale, now=now)
+    snapshot["created_at"] = "2026-07-27T10:00:00Z"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    mismatched = {"entries": [{"symbol": "TEST", "plan_id": "different-plan"}]}
+    research_runner.apply_news_snapshot(mismatched, now=now)
+    unavailable = {"entries": [{"symbol": "TEST", "plan_id": "current-plan"}]}
+    research_runner.apply_news_snapshot(unavailable, now=now)
+
+    assert stale["entries"][0]["news_action"] == "news_unavailable"
+    assert mismatched["entries"][0]["news_action"] == "news_unavailable"
+    assert unavailable["entries"][0]["news_action"] == "news_unavailable"
 
 
 def test_watch_lock_allows_only_one_writer(tmp_path):

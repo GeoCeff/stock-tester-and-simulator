@@ -350,6 +350,10 @@ function mergeNews(row, news) {
     };
 }
 
+function conservativeAiAction(current, proposed) {
+  return current === "pass" ? proposed : ["reduce", "reject", "news_unavailable"].includes(current) ? current : "reduce";
+}
+
 async function attachNews(snapshot, symbols) {
   const next = snapshot && typeof snapshot === "object" ? snapshot : {};
   next.symbols = next.symbols && typeof next.symbols === "object" ? next.symbols : {};
@@ -408,7 +412,7 @@ async function attachAiResearch(snapshot, symbols) {
         const existing = Array.isArray(row.reasons) ? row.reasons : [];
         next.symbols[symbol] = {
           ...row,
-          action: ai.action,
+          action: conservativeAiAction(row.action, ai.action),
           ai_view: ai.ai_view,
           reasons: [...new Set([...existing, ...ai.reasons])],
           ai_status: "ok",
@@ -923,4 +927,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };

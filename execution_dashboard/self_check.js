@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, liveReplyIds, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -88,6 +88,8 @@ assert.deepEqual(liveReplyIds([{ id: "reply-1", message: ["confirm"] }, { order_
 assert.equal(agentNewsSnapshot(researchAgent).symbols.AAPL.action, "pass");
 assert.equal(mergeNews({ action: "pass" }, { status: "news_unavailable", items: [], error: "offline" }).action, "news_unavailable");
 assert.equal(mergeNews({ action: "pass" }, { status: "ok", items: [{ sentiment: "negative" }], error: "" }).action, "reduce");
+assert.equal(conservativeAiAction("news_unavailable", "pass"), "news_unavailable");
+assert.equal(conservativeAiAction("pass", "reject"), "reject");
 assert.equal(parseRssItems("<rss><channel><item><title>AAPL shares rise</title><link>https://example.com</link><pubDate>today</pubDate></item></channel></rss>")[0].sentiment, "positive");
 const newsNow = Date.parse("2026-07-25T12:00:00Z");
 const filteredNews = filterRelevantNews("NVDA", [
