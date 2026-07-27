@@ -53,6 +53,23 @@ def test_research_data_gate_requires_current_complete_real_ohlc():
         research_runner.validate_research_data(
             bad, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4
         )
+    nonfinite = data.copy()
+    nonfinite.loc[index[-1], ("High", "TEST")] = np.inf
+    with pytest.raises(RuntimeError, match="invalid OHLC"):
+        research_runner.validate_research_data(
+            nonfinite, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4
+        )
+
+
+def test_research_metrics_include_starting_capital_and_reject_nonfinite_returns():
+    metrics = research_agent._metrics(pd.Series([-0.2]), [-0.2])
+
+    assert np.isclose(metrics["max_drawdown"], -0.2)
+    assert np.isclose(metrics["total_return"], -0.2)
+    with pytest.raises(ValueError, match="non-finite return"):
+        research_agent._metrics(pd.Series([np.nan]), [0.01])
+    with pytest.raises(ValueError, match="non-finite return"):
+        research_agent._metrics(pd.Series([0.01]), [np.inf])
 
 
 def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):

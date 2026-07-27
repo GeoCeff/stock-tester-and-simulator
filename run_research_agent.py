@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, DATA_SOURCE_STOOQ, DATA_SOURCE_YAHOO, get_ticker_frame, load_market_data
@@ -51,7 +52,8 @@ def validate_research_data(data, status, symbols, start, end, warmup, folds):
         if (ohlc.index.max() - ohlc.index.min()).days < minimum_span:
             raise RuntimeError(f"{symbol} does not cover 90% of the requested history")
         if (
-            (ohlc <= 0).any().any()
+            not np.isfinite(ohlc.to_numpy()).all()
+            or (ohlc <= 0).any().any()
             or (ohlc["High"] < ohlc[["Open", "Close"]].max(axis=1)).any()
             or (ohlc["Low"] > ohlc[["Open", "Close"]].min(axis=1)).any()
         ):

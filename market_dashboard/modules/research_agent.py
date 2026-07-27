@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v3"
+EXECUTION_PLAN_VERSION = "daily-bars-v4"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -113,12 +113,14 @@ def _benchmark_close(data):
 
 
 def _metrics(returns, trade_returns):
-    returns = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    returns = pd.to_numeric(returns, errors="coerce")
     trades = np.asarray(trade_returns, dtype=float)
+    if not np.isfinite(returns.to_numpy()).all() or not np.isfinite(trades).all():
+        raise ValueError("non-finite return cannot enter research metrics")
     wins = trades[trades > 0]
     losses = trades[trades < 0]
-    equity = (1 + returns).cumprod()
-    drawdown = equity / equity.cummax() - 1 if not equity.empty else pd.Series(dtype=float)
+    equity = pd.Series(np.r_[1.0, (1 + returns).cumprod().to_numpy()])
+    drawdown = equity / equity.cummax() - 1
     return {
         "trades": int(trades.size),
         "win_rate": float((trades > 0).mean()) if trades.size else 0.0,
@@ -330,14 +332,9 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                 symbol_trade_returns.append(trade_return)
                 index = exit_index + 1
             symbol_folds[symbol].append(_metrics(pd.Series(dtype=float), symbol_trade_returns))
-        trades = np.asarray(trade_returns, dtype=float)
-        wins = trades[trades > 0]
-        losses = trades[trades < 0]
+        metrics = _metrics(pd.Series(dtype=float), trade_returns)
         fold_metrics.append({
-            "trades": int(trades.size),
-            "win_rate": float((trades > 0).mean()) if trades.size else 0.0,
-            "expectancy": float(trades.mean()) if trades.size else 0.0,
-            "profit_factor": float(wins.sum() / abs(losses.sum())) if losses.size else (999.0 if wins.size else 0.0),
+            key: metrics[key] for key in ("trades", "win_rate", "expectancy", "profit_factor")
         })
 
     def development_summary(rows):
@@ -486,6 +483,7 @@ def _paper_plan_id(row, cost_bps_per_side):
             moving_averages,
             bollinger,
             rsi,
+            _metrics,
             _bracket_exit,
             evaluate_candidate,
             evaluate_execution_plan,

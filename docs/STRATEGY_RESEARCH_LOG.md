@@ -55,6 +55,15 @@ Decision: fail the entire research run on partial, stale, malformed, future, dem
 
 Decision: use only fully observable fold outcomes; never infer performance from selectively resolved boundary trades.
 
+## 2026-07-27 — Risk-metric integrity audit
+
+- Mistake corrected: fold drawdown began after the first return, so a first-bar fee or loss was absent from the risk gate. Equity curves now include starting capital.
+- Mistake corrected: nonfinite daily or trade returns could produce `NaN` comparisons that did not trip lower-bound gates. Nonfinite OHLC is rejected at ingestion, and nonfinite returns abort metric calculation.
+- Signal and bracket folds now share the same guarded metric calculator. The changed methodology is versioned as `daily-bars-v4` and included in exact-plan identity.
+- No research evaluation was run during this audit.
+
+Decision: invalid arithmetic fails the run; it is never converted to zero or allowed to bypass a risk threshold.
+
 ## 2026-07-27 — Prospective paper-evidence audit
 
 - Mistake corrected: an unversioned legacy position could inherit the current plan ID and later contribute evidence to rules it did not actually observe. Legacy pending positions now cancel; already-filled legacy records remain isolated as `legacy-unversioned`.
