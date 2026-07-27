@@ -79,7 +79,8 @@ def apply_news_snapshot(result, now=None):
     for entry in result["entries"]:
         news = symbols.get(entry["symbol"], {})
         candidate = news.get("candidate") if isinstance(news, dict) else None
-        if not entry.get("plan_id") or not isinstance(candidate, dict) or candidate.get("plan_id") != entry["plan_id"]:
+        candidate_fields = ("symbol", "style", "strategy", "signal_date", "entry", "stop", "target")
+        if not isinstance(candidate, dict) or any(candidate.get(field) != entry.get(field) for field in candidate_fields):
             news = {}
         action = news.get("action", "news_unavailable")
         if action not in {"pass", "reduce", "reject"} or action == "pass" and news.get("news_status") != "ok":

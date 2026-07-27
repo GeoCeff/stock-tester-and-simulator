@@ -19,12 +19,22 @@ Watchlist labels are research priorities, not trade recommendations. No family b
 
 ## 2026-07-27 — News-gate safety audit
 
-- Mistake corrected: a failed refresh could reuse a recent news snapshot belonging to a different exact plan. Snapshots now fail closed unless they are at most 30 minutes old and carry the current `plan_id`.
+- Mistake corrected: a failed refresh could reuse a recent news snapshot belonging to a different exact candidate. Snapshots now fail closed unless they are at most 30 minutes old and match the current symbol, style, strategy, signal date, entry, stop, and target.
+- Integration mistake corrected: news refresh occurs before paper `plan_id` assignment, so binding news to that later ID would have made every production snapshot unavailable. The binding now uses the candidate fields present on both sides of the refresh.
 - Mistake corrected: AI research could replace an existing `reduce`, `reject`, or `news_unavailable` action with `pass`. AI may now preserve or tighten the deterministic gate, never relax it.
 - Worked: relevant headlines already require parseable publication times, reject future timestamps, expire after three days, and can only reduce a technical candidate rather than create one.
 - No strategy or market-data evaluation was run during this audit.
 
 Decision: retain news as a freshness-bound execution risk gate, never as evidence of strategy profitability or a source of trade signals.
+
+## 2026-07-27 — Prospective paper-evidence audit
+
+- Mistake corrected: an unversioned legacy position could inherit the current plan ID and later contribute evidence to rules it did not actually observe. Legacy pending positions now cancel; already-filled legacy records remain isolated as `legacy-unversioned`.
+- Worked: signals enter the ledger before any future bar is inspected, limit fills begin strictly after the signal date, same-bar target fills are not assumed, stops receive conservative priority, and only the current exact plan can unlock live validation.
+- Plan identity now fingerprints the strategy, indicators, bracket replay, and paper-ledger implementation. Changing any evidence-producing rule starts a new evidence lane instead of inheriting old trades.
+- No paper positions were advanced and no market data was loaded during this audit.
+
+Decision: preserve prospective evidence only; never migrate unattributed trades into a current plan.
 
 ## 2026-07-25 — Real-data baseline and evidence correction
 

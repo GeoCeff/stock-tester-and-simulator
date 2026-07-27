@@ -475,11 +475,18 @@ def _latest_candidates(data, universe, selected):
 def _paper_plan_id(row, cost_bps_per_side):
     config = STYLE_CONFIG[row["style"]]
     holding_period = row.get("max_hold", row.get("holding_period", config["holding_period"]))
-    strategy_fingerprint = hashlib.sha256(
-        inspect.getsource(STRATEGIES[row["strategy"]]).encode("utf-8")
+    plan_fingerprint = hashlib.sha256(
+        "".join(inspect.getsource(source) for source in (
+            STRATEGIES[row["strategy"]],
+            moving_averages,
+            bollinger,
+            rsi,
+            _bracket_exit,
+            update_paper_ledger,
+        )).encode("utf-8")
     ).hexdigest()[:12]
     return (
-        f"{row['style']}:{row['strategy']}@{strategy_fingerprint}:hold={holding_period}:"
+        f"{row['style']}:{row['strategy']}@{plan_fingerprint}:hold={holding_period}:"
         f"stop={row.get('stop_atr', config['stop_atr']):g}atr:"
         f"target={row.get('target_r', config['target_r']):g}r:"
         f"entry={row.get('entry_valid_bars', ENTRY_VALID_BARS)}:"
@@ -513,8 +520,6 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
     still_open = []
     for position in ledger["positions"]:
         candidate = current_candidates.get((position["symbol"], position["style"]))
-        if not position.get("plan_id") and candidate:
-            position["plan_id"] = candidate["plan_id"]
         if cancel_withdrawn and not position.get("entry_date") and (
             not candidate
             or candidate.get("news_action") == "reject"

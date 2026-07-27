@@ -595,15 +595,24 @@ def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):
 
 def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
     path = tmp_path / "news.json"
+    entry = {
+        "symbol": "TEST",
+        "style": "SWING_20D",
+        "strategy": "low_vol_trend",
+        "signal_date": "2026-07-27",
+        "entry": 100,
+        "stop": 95,
+        "target": 110,
+    }
     path.write_text(json.dumps({"created_at": "2026-07-27T10:00:00Z", "research_version": "test-news-v1", "ai_status": "openai_unavailable", "symbols": {"TEST": {
         "action": "reduce",
         "news_status": "ok",
         "news": [{"title": "Negative headline"}],
         "reasons": ["negative headline risk"],
-        "candidate": {"plan_id": "current-plan"},
+        "candidate": entry,
     }}}), encoding="utf-8")
     monkeypatch.setattr(research_runner, "NEWS_SNAPSHOT_PATH", path)
-    result = {"entries": [{"symbol": "TEST", "plan_id": "current-plan"}]}
+    result = {"entries": [entry.copy()]}
 
     research_runner.apply_news_snapshot(result, now=pd.Timestamp("2026-07-27T10:05:00Z").to_pydatetime())
 
@@ -614,21 +623,30 @@ def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
 
 def test_news_snapshot_cannot_approve_a_stale_or_different_plan(monkeypatch, tmp_path):
     path = tmp_path / "news.json"
+    candidate = {
+        "symbol": "TEST",
+        "style": "SWING_20D",
+        "strategy": "low_vol_trend",
+        "signal_date": "2026-07-27",
+        "entry": 100,
+        "stop": 95,
+        "target": 110,
+    }
     snapshot = {
         "created_at": "2026-07-27T09:00:00Z",
-        "symbols": {"TEST": {"action": "pass", "candidate": {"plan_id": "current-plan"}}},
+        "symbols": {"TEST": {"action": "pass", "candidate": candidate}},
     }
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     monkeypatch.setattr(research_runner, "NEWS_SNAPSHOT_PATH", path)
     now = pd.Timestamp("2026-07-27T10:00:00Z").to_pydatetime()
 
-    stale = {"entries": [{"symbol": "TEST", "plan_id": "current-plan"}]}
+    stale = {"entries": [candidate.copy()]}
     research_runner.apply_news_snapshot(stale, now=now)
     snapshot["created_at"] = "2026-07-27T10:00:00Z"
     path.write_text(json.dumps(snapshot), encoding="utf-8")
-    mismatched = {"entries": [{"symbol": "TEST", "plan_id": "different-plan"}]}
+    mismatched = {"entries": [{**candidate, "target": 111}]}
     research_runner.apply_news_snapshot(mismatched, now=now)
-    unavailable = {"entries": [{"symbol": "TEST", "plan_id": "current-plan"}]}
+    unavailable = {"entries": [candidate.copy()]}
     research_runner.apply_news_snapshot(unavailable, now=now)
 
     assert stale["entries"][0]["news_action"] == "news_unavailable"
@@ -684,3 +702,51 @@ def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
     assert summary["by_plan"]["old-plan"]["status"] == "validated"
     assert summary["status"] == "warming_up"
     assert summary["current_closed_trades"] == 0
+
+
+def test_legacy_position_cannot_be_credited_to_current_plan(tmp_path):
+    path = tmp_path / "paper.json"
+    entry = {
+        "symbol": "TEST",
+        "style": "SWING_20D",
+        "strategy": "low_vol_trend",
+        "signal_date": "2026-01-05",
+        "entry": 100,
+        "stop": 95,
+        "target": 110,
+        "max_hold": 20,
+    }
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [{**entry, "entry": None, "limit_entry": 100, "entry_date": None}],
+        "closed": [],
+        "cancelled": [],
+    }), encoding="utf-8")
+
+    update_paper_ledger(
+        {"created_at": "2026-01-05T22:00:00Z", "entries": [entry]},
+        pd.DataFrame(),
+        path=path,
+    )
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+
+    assert len(ledger["positions"]) == 1
+    assert ledger["positions"][0].get("plan_id")
+    assert ledger["cancelled"][0].get("plan_id") is None
+    assert ledger["cancelled"][0]["reason"] == "research or news gate withdrew pending entry"
+
+
+def test_paper_plan_identity_changes_with_execution_engine(monkeypatch):
+    row = {
+        "style": "SWING_20D",
+        "strategy": "low_vol_trend",
+        "max_hold": 20,
+    }
+    original = research_agent._paper_plan_id(row, 10)
+
+    def changed_bracket_exit(bar, entry, stop, target, *, fill_bar=False):
+        return None, ""
+
+    monkeypatch.setattr(research_agent, "_bracket_exit", changed_bracket_exit)
+
+    assert research_agent._paper_plan_id(row, 10) != original
