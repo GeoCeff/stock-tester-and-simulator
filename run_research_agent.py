@@ -67,6 +67,7 @@ def apply_news_snapshot(result, now=None):
         created_at = datetime.fromisoformat(snapshot["created_at"].replace("Z", "+00:00"))
         if created_at > now + timedelta(minutes=5) or now - created_at > NEWS_SNAPSHOT_MAX_AGE:
             raise ValueError("news snapshot is stale")
+        news_created_at = snapshot["created_at"]
         news_version = ":".join(filter(None, [
             snapshot.get("research_version", "news-unversioned"),
             snapshot.get("ai_status", "ai-unavailable"),
@@ -74,8 +75,10 @@ def apply_news_snapshot(result, now=None):
         ]))
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         symbols = {}
+        news_created_at = ""
         news_version = "news-unavailable"
     result["news_version"] = news_version
+    result["news_created_at"] = news_created_at
     for entry in result["entries"]:
         news = symbols.get(entry["symbol"], {})
         candidate = news.get("candidate") if isinstance(news, dict) else None
@@ -91,6 +94,7 @@ def apply_news_snapshot(result, now=None):
             "news": news.get("news", []),
             "news_reasons": news.get("reasons", ["news unavailable"]),
             "news_version": news_version,
+            "news_created_at": news_created_at,
             "status": {
                 "pass": "PAPER_CANDIDATE",
                 "reduce": "PAPER_CANDIDATE_REDUCED",

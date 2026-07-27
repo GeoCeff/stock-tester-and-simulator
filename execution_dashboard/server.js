@@ -18,7 +18,9 @@ const AUDIT_FILE = path.join(DATA_DIR, "audit.jsonl");
 const MODEL_PACK_FILE = path.join(DATA_DIR, "bot_model_pack.json");
 const RESEARCH_AGENT_FILE = path.join(DATA_DIR, "research_agent.json");
 const RESEARCH_FILE = path.join(DATA_DIR, "market_research_snapshot.json");
-const RESEARCH_AGENT_MAX_AGE_MS = 5 * 86400000;
+const RESEARCH_AGENT_MAX_AGE_MS = 86400000;
+const RESEARCH_SIGNAL_MAX_AGE_MS = 5 * 86400000;
+const RESEARCH_NEWS_MAX_AGE_MS = 86400000;
 const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US";
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -548,17 +550,29 @@ function validateResearchOrder(body, agent, now = Date.now()) {
   const symbol = String(body.symbol || "").toUpperCase();
   const style = String(body.style || "");
   const planId = String(body.planId || body.plan_id || "");
+  if (!planId.trim()) return { ok: false, error: "exact research plan ID required" };
   const candidate = agent.entries.find((entry) =>
     entry.symbol === symbol && entry.style === style && entry.plan_id === planId
   );
   if (!candidate) return { ok: false, error: "live order does not match a current research candidate" };
+  const signalAt = Date.parse(candidate.signal_date || candidate.signalDate || "");
+  if (signalAt > now + 300000 || now - signalAt > RESEARCH_SIGNAL_MAX_AGE_MS) {
+    return { ok: false, error: "research candidate signal is stale" };
+  }
   if (
     agent.paper_evidence?.status !== "validated"
     || !agent.paper_evidence?.validated_plans?.includes(planId)
   ) {
     return { ok: false, error: "exact research plan has not passed forward paper validation" };
   }
-  if (candidate.news_action !== "pass") return { ok: false, error: "current news gate does not approve live execution" };
+  const newsAt = Date.parse(candidate.news_created_at || candidate.newsCreatedAt || "");
+  if (
+    candidate.news_action !== "pass"
+    || candidate.news_status !== "ok"
+    || !Number.isFinite(newsAt)
+    || newsAt > now + 300000
+    || now - newsAt > RESEARCH_NEWS_MAX_AGE_MS
+  ) return { ok: false, error: "current news gate does not approve live execution" };
   const orders = body.orders;
   if (!Array.isArray(orders) || orders.length !== 3) return { ok: false, error: "exact three-order bracket required" };
   const [entry, target, stop] = orders;

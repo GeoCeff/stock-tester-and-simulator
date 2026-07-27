@@ -27,6 +27,15 @@ Watchlist labels are research priorities, not trade recommendations. No family b
 
 Decision: retain news as a freshness-bound execution risk gate, never as evidence of strategy profitability or a source of trade signals.
 
+## 2026-07-27 — Live-candidate freshness audit
+
+- Mistake corrected: the final server boundary accepted a five-day-old agent result and an untimestamped `news_action: pass`. Agent results and embedded news approvals now expire after 24 hours; signals expire after five calendar days.
+- Mistake corrected: an empty plan ID could reach exact-plan matching. Live validation now requires a nonempty current plan ID, `news_status: ok`, and a valid nonfuture news timestamp.
+- Worked: the final server already required the exact paper-validated plan, exact entry/target/stop prices, a three-order parent bracket, and an explicit live-order startup flag.
+- No order, news refresh, strategy run, or brokerage request was made during this audit.
+
+Decision: stale evidence may remain visible for review but cannot authorize a live order.
+
 ## 2026-07-27 — Prospective paper-evidence audit
 
 - Mistake corrected: an unversioned legacy position could inherit the current plan ID and later contribute evidence to rules it did not actually observe. Legacy pending positions now cancel; already-filled legacy records remain isolated as `legacy-unversioned`.

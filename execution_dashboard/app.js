@@ -32,7 +32,8 @@
   const MODEL_VERSION = "heuristic-v2-learning";
   const RESEARCH_VERSION = "ai-research-v1";
   const MODEL_PACK_MAX_AGE_DAYS = 30;
-  const RESEARCH_AGENT_MAX_AGE_DAYS = 5;
+  const RESEARCH_AGENT_MAX_AGE_DAYS = 1;
+  const RESEARCH_NEWS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   const RESEARCH_MAX_AGE_MINUTES = 30;
   const RESEARCH_REFRESH_MS = 60 * 60 * 1000;
   const QUOTE_MAX_AGE_MS = 5000;
@@ -216,6 +217,8 @@
       state.researchAgent.paper_evidence?.status !== "validated"
       || !state.researchAgent.paper_evidence?.validated_plans?.includes(candidate.plan_id)
       || candidate.news_action !== "pass"
+      || candidate.news_status !== "ok"
+      || ageMs(candidate.news_created_at || candidate.newsCreatedAt) > RESEARCH_NEWS_MAX_AGE_MS
     ) return "reject";
     return Math.abs(metric.price - candidate.entry) / candidate.entry <= 0.03 ? "pass" : "reject";
   }

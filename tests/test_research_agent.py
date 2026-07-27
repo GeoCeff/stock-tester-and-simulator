@@ -619,6 +619,7 @@ def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
     assert result["entries"][0]["status"] == "PAPER_CANDIDATE_REDUCED"
     assert result["entries"][0]["news_action"] == "reduce"
     assert result["entries"][0]["news_version"] == "test-news-v1:openai_unavailable"
+    assert result["entries"][0]["news_created_at"] == "2026-07-27T10:00:00Z"
 
 
 def test_news_snapshot_cannot_approve_a_stale_or_different_plan(monkeypatch, tmp_path):

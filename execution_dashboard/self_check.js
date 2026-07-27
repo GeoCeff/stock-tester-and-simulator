@@ -62,7 +62,13 @@ assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SW
 const researchAgent = { schema_version: 1, created_at: "2026-07-25T00:00:00Z", entries: [{ symbol: "AAPL", side: "LONG", style: "SWING_5D", signal_date: "2026-07-25", entry: 200, stop: 190, target: 220 }] };
 assert.equal(validateResearchAgent(researchAgent).ok, true);
 assert.equal(validateResearchAgent({ ...researchAgent, entries: [{ ...researchAgent.entries[0], stop: 210 }] }).ok, false);
-const validatedCandidate = { ...researchAgent.entries[0], plan_id: "exact-plan", news_action: "pass" };
+const validatedCandidate = {
+  ...researchAgent.entries[0],
+  plan_id: "exact-plan",
+  news_action: "pass",
+  news_status: "ok",
+  news_created_at: "2026-07-25T23:50:00Z"
+};
 const validatedAgent = {
   ...researchAgent,
   entries: [validatedCandidate],
@@ -83,6 +89,9 @@ assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, paper_evi
 assert.equal(validateResearchOrder({ ...researchOrder, planId: "other-plan" }, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, false);
 assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [], shadow_entries: [validatedCandidate] }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
 assert.equal(validateResearchOrder(researchOrder, validatedAgent, Date.parse("2026-08-01T00:00:00Z")).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, planId: "" }, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, signal_date: "2026-07-01" }] }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, news_created_at: "2026-07-24T00:00:00Z" }] }, Date.parse("2026-07-26T00:00:00Z")).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, Date.parse("2026-07-26T00:00:00Z")).ok, false);
 assert.deepEqual(liveReplyIds([{ id: "reply-1", message: ["confirm"] }, { order_id: "not-a-reply" }]), ["reply-1"]);
 assert.equal(agentNewsSnapshot(researchAgent).symbols.AAPL.action, "pass");
