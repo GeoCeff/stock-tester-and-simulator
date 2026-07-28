@@ -560,7 +560,6 @@ def _clean_provider_data(data: pd.DataFrame, tickers, min_points: int = 10) -> p
     if close_cols:
         data = data.dropna(subset=close_cols, how="all")
     data = data.sort_index()
-    data = data.ffill()
 
     if len(data) < min_points:
         raise ValueError(f"Insufficient data after cleaning (need at least {min_points} data points)")

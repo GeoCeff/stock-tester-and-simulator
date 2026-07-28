@@ -432,3 +432,11 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - Paper evidence is now isolated by exact risk percentage. The final server boundary rejects research/model risk above 1%, and the execution engine version advances to `daily-bars-v9`.
 - What worked: the existing plan fingerprint and shared server validators covered both manual and automated live paths.
 - No paper position was advanced, and no strategy evaluation, holdout exposure, provider request, market-data load, IBKR request, or order was made during this audit.
+
+## 2026-07-29 — Missing-bar imputation audit
+
+- Mistake corrected: shared provider cleaning forward-filled every OHLCV column, so a missing bar for one symbol became a fabricated copy of its prior bar whenever another symbol traded that date.
+- Missing provider values now remain missing. The research loop's shared complete-OHLC calendar removes those dates before folds, indicators, holdout identity, and candidate publication.
+- The research engine version advances to `daily-bars-v10`, preventing evidence from the imputed v9 data path from validating the corrected path.
+- What worked: deleting one global forward-fill restored the missingness already handled by downstream validation and alignment.
+- No provider request, market-data load, strategy evaluation, holdout exposure, paper-ledger advancement, IBKR request, or order was made during this audit.

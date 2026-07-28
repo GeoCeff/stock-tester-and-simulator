@@ -7,6 +7,7 @@ from market_dashboard.modules.data import (
     DATA_SOURCE_STOOQ,
     MAX_DEMO_POINTS,
     PRICE_COLUMNS,
+    _clean_provider_data,
     available_tickers,
     demo_market_data,
     get_close_prices,
@@ -124,6 +125,21 @@ def test_load_market_data_reports_partial_ticker_failures(monkeypatch):
     assert status["unavailable_tickers"] == ["MSFT"]
     assert ("Close", "AAPL") in loaded.columns
     assert ("Close", "MSFT") not in loaded.columns
+
+
+def test_provider_cleaning_preserves_missing_symbol_bars():
+    index = pd.date_range("2024-01-01", periods=10, freq="B")
+    columns = pd.MultiIndex.from_product(
+        [PRICE_COLUMNS, ["AAPL", "MSFT"]],
+        names=["Field", "Ticker"],
+    )
+    data = pd.DataFrame(100.0, index=index, columns=columns)
+    data.loc[index[5], pd.IndexSlice[:, "MSFT"]] = float("nan")
+
+    cleaned = _clean_provider_data(data, ["AAPL", "MSFT"], min_points=1)
+
+    assert cleaned.loc[index[5], pd.IndexSlice[:, "MSFT"]].isna().all()
+    assert cleaned.loc[index[5], ("Close", "AAPL")] == 100
 
 
 def test_data_source_options_include_auto_and_stooq():

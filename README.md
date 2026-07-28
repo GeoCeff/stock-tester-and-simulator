@@ -57,7 +57,7 @@ a per-user scheduled task:
 
 The agent:
 
-1. downloads recognized-provider daily data for a fixed 20-stock, multi-sector universe plus SPY without demo fallback, requiring full symbols, valid OHLC, recent bars, and at least 90% of the requested history;
+1. downloads recognized-provider daily data for a fixed 20-stock, multi-sector universe plus SPY without demo fallback or missing-bar price imputation, requiring full symbols, valid OHLC, recent bars, and at least 90% of the requested history;
 2. tests the built-in strategies and holding periods with estimated costs;
 3. selects on development folds;
 4. validates the winner on one untouched final fold;
