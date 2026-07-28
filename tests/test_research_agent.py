@@ -72,6 +72,25 @@ def test_research_metrics_include_starting_capital_and_reject_nonfinite_returns(
         research_agent._metrics(pd.Series([0.01]), [np.inf])
 
 
+def test_execution_plan_acceptance_enforces_drawdown():
+    metric = {
+        "trades": 30,
+        "expectancy": 0.01,
+        "profit_factor": 1.5,
+        "positive_fold_ratio": 1.0,
+        "positive_symbol_ratio": 1.0,
+        "max_drawdown": -0.20,
+    }
+
+    accepted, reason = research_agent._accept_execution_plan(
+        {"development": metric, "final": metric},
+        research_agent.DEFAULT_GATES,
+    )
+
+    assert accepted is False
+    assert "drawdown" in reason
+
+
 def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
     index = pd.date_range("2024-01-01", periods=360, freq="B")
     close = pd.Series(np.linspace(50, 140, len(index)), index=index)
@@ -202,6 +221,7 @@ def test_research_loop_skips_high_score_candidate_that_fails_development_gates(m
             "profit_factor": 1.5,
             "positive_fold_ratio": 1.0,
             "positive_symbol_ratio": 1.0,
+            "max_drawdown": -0.1,
         },
         "final": {
             "trades": 30,
@@ -209,6 +229,7 @@ def test_research_loop_skips_high_score_candidate_that_fails_development_gates(m
             "expectancy": 0.01,
             "profit_factor": 1.5,
             "positive_symbol_ratio": 1.0,
+            "max_drawdown": -0.1,
         },
         "folds": [],
         "by_symbol": {},
@@ -263,6 +284,7 @@ def test_research_loop_skips_candidate_with_untradeable_development_bracket(monk
             "profit_factor": 1.5 if passing else 1.0,
             "positive_fold_ratio": 1.0,
             "positive_symbol_ratio": 1.0,
+            "max_drawdown": -0.1,
         }
         return {"development": metric, "final": metric, "folds": [], "by_symbol": {}}
 
@@ -318,6 +340,7 @@ def test_research_loop_selects_best_executable_plan_not_best_signal_score(monkey
             "profit_factor": 1.3,
             "positive_fold_ratio": 1.0,
             "positive_symbol_ratio": 1.0,
+            "max_drawdown": -0.1,
         }
         return {"development": metric, "final": metric, "folds": [], "by_symbol": {}}
 
@@ -423,6 +446,7 @@ def test_holdout_reject_is_shadow_only(monkeypatch):
             "profit_factor": 1.5,
             "positive_fold_ratio": 1.0,
             "positive_symbol_ratio": 1.0,
+            "max_drawdown": -0.1,
         },
         "final": {
             "trades": 30,
@@ -430,6 +454,7 @@ def test_holdout_reject_is_shadow_only(monkeypatch):
             "expectancy": 0.01,
             "profit_factor": 1.5,
             "positive_symbol_ratio": 1.0,
+            "max_drawdown": -0.1,
         },
         "folds": [],
         "by_symbol": {},

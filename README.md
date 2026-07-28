@@ -71,7 +71,7 @@ The agent:
 
 Fold evaluators stop opening new positions early enough for the full entry-validity window and maximum hold to remain observable inside that fold. This prevents fast stops near a fold edge from counting while unresolved trades disappear.
 
-Every published result and compact history record carries the exact holdout start/end/row count and a deterministic trial ID, plus folds, warmup, costs, gates, engine version, candidate set, and real-data provenance. Repeated records with the same holdout ID are monitoring updates, not independent holdout evidence.
+Every published result and compact history record carries the exact holdout start/end/row count and a deterministic trial ID, plus folds, warmup, costs, gates, engine version, candidate set, and real-data provenance. Signal and exact bracket-plan acceptance both enforce the predeclared drawdown limit; the exact plan measures chronological realized drawdown from equal-weight exit-date cohorts. Repeated records with the same holdout ID are monitoring updates, not independent holdout evidence.
 
 The fixed universe is predeclared but selected from current securities, so historical results can contain survivorship bias. They support decisions only for this stated universe and still require untouched-holdout and prospective paper evidence; they are not an unbiased historical-index claim.
 

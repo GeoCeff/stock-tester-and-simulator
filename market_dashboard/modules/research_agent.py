@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v4"
+EXECUTION_PLAN_VERSION = "daily-bars-v5"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -273,7 +273,7 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
     fold_metrics = []
     symbol_folds = {symbol: [] for symbol in prepared}
     for start, end in _folds(usable_length, folds, warmup):
-        trade_returns = []
+        dated_trade_returns = []
         for symbol, frame in prepared.items():
             symbol_trade_returns = []
             frame = frame.iloc[-usable_length:]
@@ -328,13 +328,20 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                 if exit_price is None:
                     break
                 trade_return = exit_price / entry - 1 - 2 * cost_bps_per_side / 10_000
-                trade_returns.append(trade_return)
+                dated_trade_returns.append((frame.index[exit_index], trade_return))
                 symbol_trade_returns.append(trade_return)
                 index = exit_index + 1
             symbol_folds[symbol].append(_metrics(pd.Series(dtype=float), symbol_trade_returns))
-        metrics = _metrics(pd.Series(dtype=float), trade_returns)
+        trade_returns = [value for _, value in dated_trade_returns]
+        # ponytail: realized exit-cohort curve; add daily position MTM only when portfolio sizing is modeled.
+        realized_returns = (
+            pd.DataFrame(dated_trade_returns, columns=["date", "return"])
+            .groupby("date")["return"].mean().sort_index()
+            if dated_trade_returns else pd.Series(dtype=float)
+        )
+        metrics = _metrics(realized_returns, trade_returns)
         fold_metrics.append({
-            key: metrics[key] for key in ("trades", "win_rate", "expectancy", "profit_factor")
+            key: metrics[key] for key in ("trades", "win_rate", "expectancy", "profit_factor", "max_drawdown")
         })
 
     def development_summary(rows):
@@ -349,6 +356,7 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                 weights=[max(row["trades"], 1) for row in rows],
             )),
             "profit_factor": min(row["profit_factor"] for row in rows),
+            "max_drawdown": min(row["max_drawdown"] for row in rows),
             "positive_fold_ratio": float(np.mean([row["expectancy"] > 0 for row in rows])),
         }
 
@@ -392,6 +400,8 @@ def _accept_execution_plan(evaluation, gates):
         failures.append("execution-plan fold consistency failed")
     if min(development["positive_symbol_ratio"], final["positive_symbol_ratio"]) < gates["min_positive_symbol_ratio"]:
         failures.append("execution-plan symbol consistency failed")
+    if min(development["max_drawdown"], final["max_drawdown"]) < -gates["max_drawdown"]:
+        failures.append("execution-plan drawdown failed")
     return not failures, "; ".join(failures) or "published entry and bracket plan passed"
 
 

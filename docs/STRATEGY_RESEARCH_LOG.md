@@ -383,3 +383,12 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - Live submission now fails closed unless every returned broker response row carries an order ID. Warning-only responses remain unacknowledged and the dashboard does not add them to tracked orders or increment its auto-trade count.
 - What worked: one response check at the shared server boundary covers manual and automated submission without changing browser order-state logic.
 - No IBKR request, order, strategy evaluation, paper-ledger advancement, provider request, or market-data load was made during this audit.
+
+## 2026-07-28 — Execution-plan drawdown audit
+
+- Mistake corrected: signal evaluation and prospective paper evidence enforced the 15% drawdown gate, but the exact limit/stop/target replay did not calculate or reject drawdown.
+- Exact-plan folds now build a chronological realized equity curve from equal-weight exit-date cohorts, retain fold drawdown, and require both development and untouched-final drawdown to remain within the predeclared gate.
+- The execution engine version advances to `daily-bars-v5`, so future holdout and paper-plan identities cannot reuse v4 evidence.
+- What worked: the existing drawdown gate and metric helper covered acceptance; no new configuration or dependency was needed.
+- Known ceiling: this is realized-trade drawdown, not daily mark-to-market portfolio drawdown. Add daily position sizing and mark-to-market only when the research engine models capital allocation across concurrent positions.
+- No strategy evaluation, holdout exposure, paper-ledger advancement, provider request, market-data load, IBKR request, or order was made during this audit.
