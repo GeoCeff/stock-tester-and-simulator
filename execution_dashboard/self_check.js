@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateAutoRisk, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -117,12 +117,12 @@ const autoSources = {
   quote: { ok: true, data: [{ conid: 265598, 84: 199.9, 86: 200.1 }] },
   audit: []
 };
-assert.equal(validateAutoRisk(autoBody, autoSources, validationNow).ok, true);
-assert.equal(validateAutoRisk(autoBody, { ...autoSources, pnl: { ok: true, data: { upnl: { "U123.Core": { dpl: -2000, nl: 100000 } } } } }, validationNow).ok, false);
-assert.equal(validateAutoRisk(autoBody, { ...autoSources, accountSummary: { ok: true, data: { netliquidation: { amount: 100000 }, availablefunds: { amount: 100 } } } }, validationNow).ok, false);
-assert.equal(validateAutoRisk(autoBody, { ...autoSources, positions: { ok: true, data: [{ conid: 265598, position: 1 }] } }, validationNow).ok, false);
-assert.equal(validateAutoRisk(autoBody, { ...autoSources, quote: { ok: true, data: [{ conid: 265598, 84: 199, 86: 201 }] } }, validationNow).ok, false);
-assert.equal(validateAutoRisk(autoBody, { ...autoSources, audit: [{ type: "live_order_intent", auto: true, accountId: "U123", time: "2026-07-26T00:00:00Z" }] }, validationNow).ok, false);
+assert.equal(validateBrokerRisk(autoBody, autoSources, validationNow).ok, true);
+assert.equal(validateBrokerRisk({ ...autoBody, auto: false }, { ...autoSources, pnl: { ok: true, data: { upnl: { "U123.Core": { dpl: -2000, nl: 100000 } } } } }, validationNow).ok, false);
+assert.equal(validateBrokerRisk(autoBody, { ...autoSources, accountSummary: { ok: true, data: { netliquidation: { amount: 100000 }, availablefunds: { amount: 100 } } } }, validationNow).ok, false);
+assert.equal(validateBrokerRisk(autoBody, { ...autoSources, positions: { ok: true, data: [{ conid: 265598, position: 1 }] } }, validationNow).ok, false);
+assert.equal(validateBrokerRisk({ ...autoBody, auto: false }, { ...autoSources, quote: { ok: true, data: [{ conid: 265598, 84: 199, 86: 201 }] } }, validationNow).ok, false);
+assert.equal(validateBrokerRisk(autoBody, { ...autoSources, audit: [{ type: "live_order_intent", auto: true, accountId: "U123", time: "2026-07-26T00:00:00Z" }] }, validationNow).ok, false);
 assert.equal(agentNewsSnapshot(researchAgent).symbols.AAPL.action, "pass");
 assert.equal(mergeNews({ action: "pass" }, { status: "news_unavailable", items: [], error: "offline" }).action, "news_unavailable");
 assert.equal(mergeNews({ action: "pass" }, { status: "ok", items: [{ sentiment: "negative" }], error: "" }).action, "reduce");

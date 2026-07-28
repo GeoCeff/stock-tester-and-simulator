@@ -21,8 +21,8 @@ const RESEARCH_FILE = path.join(DATA_DIR, "market_research_snapshot.json");
 const RESEARCH_AGENT_MAX_AGE_MS = 86400000;
 const RESEARCH_SIGNAL_MAX_AGE_MS = 5 * 86400000;
 const RESEARCH_NEWS_MAX_AGE_MS = 86400000;
-const AUTO_MAX_DAILY_LOSS_PCT = 0.02;
-const AUTO_MAX_SPREAD_BPS = 20;
+const MAX_DAILY_LOSS_PCT = 0.02;
+const MAX_SPREAD_BPS = 20;
 let autoOrderInFlight = false;
 const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US";
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
@@ -625,8 +625,7 @@ function ibkrRows(result, key) {
   return Array.isArray(result.data?.[key]) ? result.data[key] : null;
 }
 
-function validateAutoRisk(body, sources, now = Date.now()) {
-  if (!body.auto) return { ok: true };
+function validateBrokerRisk(body, sources, now = Date.now()) {
   const accountId = String(body.accountId || "");
   const entry = body.orders?.[0] || {};
   const conid = Number(entry.conid);
@@ -637,8 +636,8 @@ function validateAutoRisk(body, sources, now = Date.now()) {
   if (!Number.isFinite(equity) || !Number.isFinite(pnlEquity) || pnlEquity <= 0 || !Number.isFinite(Number(core?.dpl))) {
     return { ok: false, error: "current IBKR auto-risk P&L required" };
   }
-  if (Number(core.dpl) <= -Math.min(equity, pnlEquity) * AUTO_MAX_DAILY_LOSS_PCT) {
-    return { ok: false, error: "automated trading daily loss limit reached" };
+  if (Number(core.dpl) <= -Math.min(equity, pnlEquity) * MAX_DAILY_LOSS_PCT) {
+    return { ok: false, error: "live trading daily loss limit reached" };
   }
   if (!Number.isFinite(available) || available < Number(entry.quantity) * Number(entry.price)) return { ok: false, error: "insufficient confirmed available funds" };
 
@@ -658,8 +657,9 @@ function validateAutoRisk(body, sources, now = Date.now()) {
   const bid = Number(quote?.[84] ?? quote?.bid);
   const ask = Number(quote?.[86] ?? quote?.ask);
   const spreadBps = bid > 0 && ask >= bid ? (ask - bid) / ((ask + bid) / 2) * 10000 : Infinity;
-  if (!Number.isFinite(spreadBps) || spreadBps > AUTO_MAX_SPREAD_BPS) return { ok: false, error: "current IBKR spread is unavailable or too wide" };
+  if (!Number.isFinite(spreadBps) || spreadBps > MAX_SPREAD_BPS) return { ok: false, error: "current IBKR spread is unavailable or too wide" };
 
+  if (!body.auto) return { ok: true };
   const today = marketDayKey(now);
   const autoIntents = (sources.audit || []).filter((event) =>
     event.type === "live_order_intent"
@@ -986,19 +986,17 @@ async function handleApi(req, res, url) {
         appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: contractValidation.error });
         return send(res, 403, contractValidation);
       }
-      if (body.auto) {
-        const conid = Number(orders[0].conid);
-        const [pnl, positions, openOrders, quote] = await Promise.all([
-          ibkrRequest("GET", "iserver/account/pnl/partitioned"),
-          ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/positions/0`),
-          ibkrRequest("GET", `iserver/account/orders?force=true&accountId=${encodeURIComponent(accountId)}`),
-          ibkrRequest("GET", `iserver/marketdata/snapshot?conids=${conid}&fields=84,86`)
-        ]);
-        const autoRisk = validateAutoRisk(body, { accountSummary, pnl, positions, openOrders, quote, audit: readAudit(1000) });
-        if (!autoRisk.ok) {
-          appendAudit({ type: "auto_order_rejected", accountId, setupId: body.setupId, reason: autoRisk.error });
-          return send(res, 403, autoRisk);
-        }
+      const conid = Number(orders[0].conid);
+      const [pnl, positions, openOrders, quote] = await Promise.all([
+        ibkrRequest("GET", "iserver/account/pnl/partitioned"),
+        ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/positions/0`),
+        ibkrRequest("GET", `iserver/account/orders?force=true&accountId=${encodeURIComponent(accountId)}`),
+        ibkrRequest("GET", `iserver/marketdata/snapshot?conids=${conid}&fields=84,86`)
+      ]);
+      const brokerRisk = validateBrokerRisk(body, { accountSummary, pnl, positions, openOrders, quote, audit: readAudit(1000) });
+      if (!brokerRisk.ok) {
+        appendAudit({ type: body.auto ? "auto_order_rejected" : "live_order_rejected", accountId, setupId: body.setupId, reason: brokerRisk.error });
+        return send(res, 403, brokerRisk);
       }
       const brokerOrders = canonicalResearchOrders(orders);
       const intent = appendAudit({ type: "live_order_intent", accountId, setupId: body.setupId, auto: body.auto === true, orders: brokerOrders });
@@ -1049,4 +1047,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateAutoRisk, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };

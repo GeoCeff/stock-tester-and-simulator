@@ -17,6 +17,15 @@
 
 Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
 
+## 2026-07-28 — Shared live-risk boundary
+
+- Mistake corrected: fresh broker P&L, available funds, duplicate position/order, and bid/ask spread checks were enforced server-side only for full auto. A direct manual request with the confirmation phrase could bypass them.
+- The existing broker-risk validator now applies to every live bracket. Only the concurrency lock and one-auto-intent-per-market-day rule remain automation-specific.
+- Manual confirmation is still required, but it cannot override the hard -2% daily-loss floor, 20 bps spread ceiling, funding check, duplicate exposure check, or complete-evidence requirement.
+- No IBKR request, order, strategy evaluation, paper-ledger advancement, or market-data load was made during this audit.
+
+Decision: manual approval authorizes intent, not an exemption from account and execution risk controls.
+
 ## 2026-07-27 — Full-auto trust-boundary audit
 
 - Mistake corrected: full auto required a server startup flag, but daily loss, trade count, duplicate position/order, quote spread, available funds, and in-flight checks existed only in browser state.
