@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v10"
+EXECUTION_PLAN_VERSION = "daily-bars-v11"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -675,7 +675,9 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
         if chronology_valid:
             rows = [rows[index] for index in np.argsort(exit_dates)]
             exit_dates = exit_dates.sort_values()
-        returns = np.asarray([row["return"] for row in rows], dtype=float)
+        returns = pd.to_numeric(pd.Series([row.get("return") for row in rows]), errors="coerce").to_numpy(dtype=float)
+        if rows and (not chronology_valid or not np.isfinite(returns).all()):
+            raise ValueError("paper ledger closed evidence requires valid exit dates and finite returns")
         wins = returns[returns > 0]
         losses = returns[returns < 0]
         equity = pd.Series(np.r_[1.0, (1 + returns).cumprod()])

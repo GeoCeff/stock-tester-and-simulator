@@ -1059,6 +1059,30 @@ def test_paper_gate_rejects_symbol_or_time_concentration(tmp_path):
     assert summary["by_plan"]["short-burst"]["evidence_span_days"] == 29
 
 
+def test_paper_gate_rejects_nonfinite_closed_evidence(tmp_path):
+    path = tmp_path / "paper.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": [{
+            "symbol": "TEST",
+            "style": "SWING_20D",
+            "plan_id": "invalid",
+            "signal_date": "2025-01-01",
+            "exit_date": "2025-01-02",
+            "return": float("inf"),
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="finite returns"):
+        update_paper_ledger(
+            {"created_at": "2026-01-05T22:00:00Z", "entries": []},
+            pd.DataFrame(),
+            path=path,
+        )
+
+
 def test_legacy_position_cannot_be_credited_to_current_plan(tmp_path):
     path = tmp_path / "paper.json"
     entry = {

@@ -448,3 +448,11 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - What worked: replacing the auto-only flag at the shared live route covered every execution mode without changing order rules or brokerage payloads.
 - Known ceiling: the lock is process-global. Use per-account locks only if legitimate concurrent multi-account throughput becomes necessary.
 - No IBKR request, order, strategy evaluation, holdout exposure, paper-ledger advancement, provider request, or market-data load was made during this audit.
+
+## 2026-07-29 — Non-finite paper-evidence audit
+
+- Mistake corrected: 30 infinite paper returns across five symbols and 116 days produced infinite expectancy, no measured drawdown, and a false `validated` result.
+- Closed paper evidence now fails before metrics unless every exit date is valid and every return is finite.
+- The research engine version advances to `daily-bars-v11`, isolating corrected evidence from the permissive v10 path.
+- What worked: one validation at the shared per-plan metric boundary covers every actionable and shadow ledger summary.
+- No paper position was advanced, and no strategy evaluation, holdout exposure, provider request, market-data load, IBKR request, or order was made during this audit.
