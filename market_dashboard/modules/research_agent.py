@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v6"
+EXECUTION_PLAN_VERSION = "daily-bars-v7"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -754,6 +754,10 @@ def run_research_loop(
         "cost_bps_per_side": cost_bps_per_side,
         "gates": gates,
         "engine_version": EXECUTION_PLAN_VERSION,
+        "excluded_holdout_trials": [
+            {"style": style, "strategy": strategy}
+            for style, strategy in sorted(excluded_holdout_trials)
+        ],
         "candidates": [
             {"style": candidate["style"], "strategy": candidate["strategy"]}
             for candidate in candidates
@@ -988,7 +992,11 @@ def recent_rejected_holdout_trials(*, path=None, now=None, cooldown_days=HOLDOUT
                     name for name in STRATEGIES
                     if STRATEGY_FAMILIES.get(name, name) == family
                 ] or [strategy]
-                trials.update((style, name) for name in family_members)
+                trials.update(
+                    (candidate_style, name)
+                    for candidate_style in STYLE_CONFIG
+                    for name in family_members
+                )
     return trials
 
 

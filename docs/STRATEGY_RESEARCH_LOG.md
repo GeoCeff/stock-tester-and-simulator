@@ -401,3 +401,11 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - The execution engine version advances to `daily-bars-v6`, preventing future holdout and paper-plan identities from reusing evidence produced by positional v5 calendars.
 - What worked: one alignment at the research-loop boundary fixes every candidate and both evaluators without per-strategy changes.
 - No strategy evaluation, holdout exposure, paper-ledger advancement, provider request, market-data load, IBKR request, or order was made during this audit.
+
+## 2026-07-29 — Cross-style family-cooldown audit
+
+- Mistake corrected: a rejected family was cooled down only within its rejected holding style, so the same trend family could reuse the same outer holdout through another horizon.
+- A holdout rejection now blocks every registered member of that family across overnight, 5-day, and 20-day research styles for the existing 90-day period.
+- The pre-run exclusion set is now retained in the published protocol and holdout identity; the research engine version advances to `daily-bars-v7`.
+- What worked: expanding the existing family set at its history boundary fixed selection without changing any strategy rule, gate, or holding period.
+- No strategy evaluation, holdout exposure, paper-ledger advancement, provider request, market-data load, IBKR request, or order was made during this audit.

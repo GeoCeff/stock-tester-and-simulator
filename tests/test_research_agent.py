@@ -426,6 +426,7 @@ def test_research_loop_selects_best_executable_plan_not_best_signal_score(monkey
 
     assert result["styles"]["SWING_20D"]["strategy"] == "signal_best"
     assert final_exposures == ["signal_best"]
+    assert result["research_protocol"]["excluded_holdout_trials"] == [{"style": "SWING_20D", "strategy": "plan_best"}]
 
 
 def test_development_reject_does_not_masquerade_as_final_holdout(monkeypatch):
@@ -595,7 +596,10 @@ def test_recent_rejected_holdout_trials_ignores_passes_and_expired_trials(tmp_pa
         now=pd.Timestamp("2026-07-25", tz="UTC").to_pydatetime(),
     )
 
-    assert trials == {("SWING_20D", "recent_reject")}
+    assert trials == {
+        (style, "recent_reject")
+        for style in research_agent.STYLE_CONFIG
+    }
 
 
 def test_recent_rejected_holdout_trials_blocks_the_strategy_family(tmp_path):
@@ -618,6 +622,8 @@ def test_recent_rejected_holdout_trials_blocks_the_strategy_family(tmp_path):
 
     assert ("SWING_20D", "trend_momentum") in trials
     assert ("SWING_20D", "benchmark_confirmed_trend") in trials
+    assert ("SWING_5D", "low_vol_trend") in trials
+    assert ("OVERNIGHT_1D", "macd_trend") in trials
     assert ("SWING_20D", "rsi_mean_reversion") not in trials
 
 
