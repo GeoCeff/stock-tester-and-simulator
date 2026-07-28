@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v5"
+EXECUTION_PLAN_VERSION = "daily-bars-v6"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -420,6 +420,20 @@ def _common_length(data, universe):
     return min(lengths) if lengths else 0
 
 
+def _align_universe_data(data, universe):
+    common_dates = data.index
+    for symbol in universe:
+        frame = get_ticker_frame(data, symbol)
+        columns = [column for column in ("Open", "High", "Low", "Close") if frame[column].notna().any()]
+        if "Close" not in columns:
+            raise ValueError(f"{symbol} has no usable close data")
+        complete_dates = frame[columns].apply(pd.to_numeric, errors="coerce").dropna().index
+        common_dates = common_dates.intersection(complete_dates, sort=False)
+    if common_dates.empty:
+        raise ValueError("universe has no shared complete OHLC dates")
+    return data.loc[common_dates]
+
+
 def _latest_candidates(data, universe, selected):
     rows = []
     market_breadth = None
@@ -722,6 +736,7 @@ def run_research_loop(
         raise ValueError("universe required")
     if folds < 4:
         raise ValueError("at least four folds required to preserve a final holdout")
+    data = _align_universe_data(data, universe)
     gates = {**DEFAULT_GATES, **(gates or {})}
     candidates = candidates or DEFAULT_CANDIDATES
     excluded_holdout_trials = set(excluded_holdout_trials or ())

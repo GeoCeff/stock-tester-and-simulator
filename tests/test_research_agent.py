@@ -192,6 +192,55 @@ def test_research_loop_requires_a_separate_final_holdout():
         run_research_loop(pd.DataFrame(), ["TEST"], folds=3)
 
 
+def test_research_loop_uses_one_shared_complete_ohlc_calendar(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=260, freq="B")
+    close = pd.Series(np.linspace(100, 130, len(index)), index=index)
+    data = pd.DataFrame({
+        (field, symbol): close
+        for symbol in ("AAA", "BBB")
+        for field in ("Open", "High", "Low", "Close")
+    })
+    missing_date = index[-15]
+    data.loc[missing_date, pd.IndexSlice[:, "BBB"]] = np.nan
+    seen_dates = {}
+
+    def fake_evaluate(frame, universe, candidate, **kwargs):
+        seen_dates.update({
+            symbol: tuple(research_agent.get_ticker_frame(frame, symbol)["Close"].dropna().index)
+            for symbol in universe
+        })
+        metric = {
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy": 0.0,
+            "profit_factor": 0.0,
+            "max_drawdown": 0.0,
+            "total_return": 0.0,
+        }
+        return {
+            **candidate,
+            "development": {**metric, "positive_fold_ratio": 0.0},
+            "final": metric,
+            "folds": [metric],
+            "score": 0.0,
+        }
+
+    monkeypatch.setattr(research_agent, "evaluate_candidate", fake_evaluate)
+    result = run_research_loop(
+        data,
+        ["AAA", "BBB"],
+        candidates=[{"style": "SWING_20D", "strategy": "low_vol_trend"}],
+        folds=4,
+        warmup=200,
+    )
+
+    common_dates = index[index != missing_date]
+    final_start = research_agent._folds(len(common_dates), 4, 200)[-1][0]
+    assert seen_dates["AAA"] == seen_dates["BBB"]
+    assert missing_date not in seen_dates["AAA"]
+    assert result["holdout"]["start"] == str(common_dates[final_start].date())
+
+
 def test_research_loop_skips_high_score_candidate_that_fails_development_gates(monkeypatch):
     index = pd.date_range("2024-01-01", periods=360, freq="B")
     data = pd.DataFrame({("Close", "TEST"): np.arange(360) + 100}, index=index)

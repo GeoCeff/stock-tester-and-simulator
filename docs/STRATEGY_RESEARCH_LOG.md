@@ -392,3 +392,12 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - What worked: the existing drawdown gate and metric helper covered acceptance; no new configuration or dependency was needed.
 - Known ceiling: this is realized-trade drawdown, not daily mark-to-market portfolio drawdown. Add daily position sizing and mark-to-market only when the research engine models capital allocation across concurrent positions.
 - No strategy evaluation, holdout exposure, paper-ledger advancement, provider request, market-data load, IBKR request, or order was made during this audit.
+
+## 2026-07-28 — Shared holdout-calendar audit
+
+- Mistake corrected: folds used each symbol's last equal number of observations, so a missing bar could place symbols in different calendar windows while the result published one holdout start from the first symbol.
+- Reproduction: one missing late bar placed two nominal final folds three calendar days apart.
+- The research loop now intersects each universe member's observed OHLC dates before development selection, exact-plan replay, final-holdout exposure, and candidate publication.
+- The execution engine version advances to `daily-bars-v6`, preventing future holdout and paper-plan identities from reusing evidence produced by positional v5 calendars.
+- What worked: one alignment at the research-loop boundary fixes every candidate and both evaluators without per-strategy changes.
+- No strategy evaluation, holdout exposure, paper-ledger advancement, provider request, market-data load, IBKR request, or order was made during this audit.

@@ -69,7 +69,7 @@ The agent:
 10. records compact run lessons in `execution_dashboard/data/research_history.jsonl`;
 11. publishes a rejected result when nothing passes.
 
-Fold evaluators stop opening new positions early enough for the full entry-validity window and maximum hold to remain observable inside that fold. This prevents fast stops near a fold edge from counting while unresolved trades disappear.
+Fold evaluators first restrict every universe member to one shared calendar of complete OHLC observations, then stop opening new positions early enough for the full entry-validity window and maximum hold to remain observable inside that fold. This keeps final-holdout dates identical across symbols and prevents fast stops near a fold edge from counting while unresolved trades disappear.
 
 Every published result and compact history record carries the exact holdout start/end/row count and a deterministic trial ID, plus folds, warmup, costs, gates, engine version, candidate set, and real-data provenance. Signal and exact bracket-plan acceptance both enforce the predeclared drawdown limit; the exact plan measures chronological realized drawdown from equal-weight exit-date cohorts. Repeated records with the same holdout ID are monitoring updates, not independent holdout evidence.
 
