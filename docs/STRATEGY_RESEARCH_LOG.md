@@ -416,3 +416,11 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - A shared prefix-invariance regression check now covers every strategy in the production registry and will fail if future changes introduce a centered window, negative shift, or other future-bar dependency.
 - No strategy rule, parameter, gate, holdout, or engine identity changed.
 - No strategy evaluation, holdout exposure, paper-ledger advancement, provider request, market-data load, IBKR request, or order was made during this audit.
+
+## 2026-07-29 — News-conditioned paper-evidence audit
+
+- Mistake corrected: actionable paper entries with `reduce` or unavailable news could be queued, and their plan identity was identical to a later `pass` candidate.
+- The actionable paper lane now admits and retains only exact candidates with `news_action: pass`; reduced, rejected, unavailable, or missing news approval cannot enter its validation evidence.
+- Paper plan identity now includes the news action, and the execution engine version advances to `daily-bars-v8`. The development-qualified shadow lane remains non-actionable and unchanged.
+- What worked: the existing actionable-versus-shadow ledger boundary was sufficient; no new ledger, gate, or dependency was added.
+- No paper position was advanced, and no strategy evaluation, holdout exposure, provider request, market-data load, IBKR request, or order was made during this audit.

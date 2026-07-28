@@ -685,6 +685,7 @@ def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
             "target": 105,
             "max_hold": 20,
             "status": "PENDING_NEWS_AND_LIVE_GATES",
+            "news_action": "pass",
         }],
     }
     path = tmp_path / "paper.json"
@@ -719,6 +720,7 @@ def test_paper_ledger_does_not_assume_fill_bar_target_sequence(tmp_path):
         "target": 105,
         "max_hold": 20,
         "status": "PAPER_CANDIDATE",
+        "news_action": "pass",
     }
     path = tmp_path / "paper.json"
 
@@ -750,6 +752,7 @@ def test_paper_ledger_records_opening_gap_below_stop(tmp_path):
         "target": 110,
         "max_hold": 20,
         "status": "PAPER_CANDIDATE",
+        "news_action": "pass",
     }
     path = tmp_path / "paper.json"
 
@@ -782,6 +785,7 @@ def test_paper_ledger_does_not_overlap_persistent_signal(tmp_path):
         "target": 120,
         "max_hold": 20,
         "status": "PAPER_CANDIDATE",
+        "news_action": "pass",
     }
     path = tmp_path / "paper.json"
     update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data.iloc[:1], path=path)
@@ -816,6 +820,7 @@ def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):
         "target": 120,
         "max_hold": 20,
         "status": "PAPER_CANDIDATE",
+        "news_action": "pass",
     }
     path = tmp_path / "paper.json"
     update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data, path=path)
@@ -834,6 +839,44 @@ def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):
         cancel_withdrawn=False,
     )
     assert len(json.loads(shadow_path.read_text(encoding="utf-8"))["positions"]) == 1
+
+
+def test_actionable_paper_evidence_requires_news_pass(tmp_path):
+    date = pd.date_range("2026-01-05", periods=1, freq="B")
+    data = pd.DataFrame({
+        ("Open", "TEST"): [100],
+        ("High", "TEST"): [101],
+        ("Low", "TEST"): [99],
+        ("Close", "TEST"): [100],
+    }, index=date)
+    entry = {
+        "symbol": "TEST",
+        "side": "LONG",
+        "style": "SWING_20D",
+        "strategy": "low_vol_trend",
+        "signal_date": "2026-01-05",
+        "entry": 100,
+        "stop": 95,
+        "target": 110,
+        "max_hold": 20,
+        "news_version": "news-v1",
+        "news_action": "pass",
+    }
+    path = tmp_path / "paper.json"
+
+    update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data, path=path)
+    update_paper_ledger({
+        "created_at": "2026-01-06T22:00:00Z",
+        "entries": [{**entry, "news_action": "reduce"}],
+    }, data, path=path)
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+
+    assert ledger["positions"] == []
+    assert ledger["cancelled"][0]["reason"] == "research or news gate withdrew pending entry"
+    assert research_agent._paper_plan_id(entry, 10) != research_agent._paper_plan_id(
+        {**entry, "news_action": "reduce"},
+        10,
+    )
 
 
 def test_news_snapshot_marks_reduced_candidate(monkeypatch, tmp_path):
@@ -1027,6 +1070,7 @@ def test_legacy_position_cannot_be_credited_to_current_plan(tmp_path):
         "stop": 95,
         "target": 110,
         "max_hold": 20,
+        "news_action": "pass",
     }
     path.write_text(json.dumps({
         "schema_version": 1,

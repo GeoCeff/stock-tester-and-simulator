@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v7"
+EXECUTION_PLAN_VERSION = "daily-bars-v8"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -521,7 +521,8 @@ def _paper_plan_id(row, cost_bps_per_side):
         f"entry={row.get('entry_valid_bars', ENTRY_VALID_BARS)}:"
         f"engine={EXECUTION_PLAN_VERSION}:"
         f"cost={cost_bps_per_side:g}bps:"
-        f"news={row.get('news_version', 'news-unversioned')}"
+        f"news={row.get('news_version', 'news-unversioned')}:"
+        f"gate={row.get('news_action', 'unreviewed')}"
     )
 
 
@@ -551,7 +552,7 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
         candidate = current_candidates.get((position["symbol"], position["style"]))
         if cancel_withdrawn and not position.get("entry_date") and (
             not candidate
-            or candidate.get("news_action") == "reject"
+            or candidate.get("news_action") != "pass"
             or position.get("plan_id") != candidate["plan_id"]
         ):
             ledger["cancelled"].append({**position, "reason": "research or news gate withdrew pending entry"})
@@ -635,7 +636,7 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
         elif (
             key not in existing
             and not any((row["symbol"], row["style"]) == key[:2] for row in still_open)
-            and entry.get("news_action") != "reject"
+            and (not cancel_withdrawn or entry.get("news_action") == "pass")
         ):
             still_open.append({
                 **entry,
@@ -643,18 +644,25 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
                 "entry": None,
                 "entry_date": None,
             })
-    rejected = [row for row in still_open if row.get("news_action") == "reject" and not row.get("entry_date")]
-    ledger["cancelled"].extend({**row, "reason": "rejected by news gate"} for row in rejected)
+    rejected = [
+        row for row in still_open
+        if cancel_withdrawn and row.get("news_action") != "pass" and not row.get("entry_date")
+    ]
+    ledger["cancelled"].extend({**row, "reason": "not approved by news gate"} for row in rejected)
     still_open = [row for row in still_open if row not in rejected]
     ledger["positions"] = still_open
 
-    current_plan_ids = {entry["plan_id"] for entry in result["entries"]}
+    current_plan_ids = {
+        entry["plan_id"] for entry in result["entries"]
+        if not cancel_withdrawn or entry.get("news_action") == "pass"
+    }
     for style, row in result.get("styles", {}).items():
         if style in STYLE_CONFIG and row.get("acceptance", {}).get("status") == "pass":
             current_plan_ids.add(_paper_plan_id({
                 "style": style,
                 **row,
                 "news_version": result.get("news_version", "news-unversioned"),
+                "news_action": "pass",
             }, cost_bps_per_side))
 
     by_plan = {}
