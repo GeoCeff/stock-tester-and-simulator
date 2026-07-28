@@ -440,3 +440,11 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - The research engine version advances to `daily-bars-v10`, preventing evidence from the imputed v9 data path from validating the corrected path.
 - What worked: deleting one global forward-fill restored the missingness already handled by downstream validation and alignment.
 - No provider request, market-data load, strategy evaluation, holdout exposure, paper-ledger advancement, IBKR request, or order was made during this audit.
+
+## 2026-07-29 — Concurrent live-submission audit
+
+- Safety gap corrected: the server's in-flight lock covered only automated submissions, allowing simultaneous manual requests to pass duplicate-position/order checks before either request reached IBKR.
+- One fail-closed server lock now serializes every manual and automated live submission from validation through broker acknowledgement.
+- What worked: replacing the auto-only flag at the shared live route covered every execution mode without changing order rules or brokerage payloads.
+- Known ceiling: the lock is process-global. Use per-account locks only if legitimate concurrent multi-account throughput becomes necessary.
+- No IBKR request, order, strategy evaluation, holdout exposure, paper-ledger advancement, provider request, or market-data load was made during this audit.

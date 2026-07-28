@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, acquireLiveOrderLock, releaseLiveOrderLock, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -53,6 +53,11 @@ assert.equal(validateAutoOrder({ auto: true }).ok, process.env.ENABLE_FULL_AUTO 
 assert.equal(validateAutoOrder({ auto: "false", symbol: "AAPL", confirmation: "LIVE AAPL" }).ok, false);
 assert.equal(validateAutoOrder({ symbol: "AAPL", auto: false }).ok, false);
 assert.equal(validateAutoOrder({ symbol: "AAPL", auto: false, confirmation: "LIVE AAPL" }).ok, true);
+assert.equal(acquireLiveOrderLock(), true);
+assert.equal(acquireLiveOrderLock(), false);
+releaseLiveOrderLock();
+assert.equal(acquireLiveOrderLock(), true);
+releaseLiveOrderLock();
 const modelStyle = { enabled: false, holding_period: 0, min_probability: 0, stop_atr: 0, target_r: 0, risk_pct: 0, acceptance: { status: "reject" } };
 const modelPack = {
   schema_version: 1,

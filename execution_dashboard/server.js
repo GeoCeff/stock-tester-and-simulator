@@ -24,7 +24,7 @@ const RESEARCH_NEWS_MAX_AGE_MS = 86400000;
 const MAX_DAILY_LOSS_PCT = 0.02;
 const MAX_SPREAD_BPS = 20;
 const MAX_RESEARCH_RISK_PCT = 0.01;
-let autoOrderInFlight = false;
+let liveOrderInFlight = false;
 const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US";
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -473,6 +473,17 @@ function validateAutoOrder(body) {
   const symbol = String(body.symbol || "").toUpperCase();
   if (!body.auto && body.confirmation !== `LIVE ${symbol}`) return { ok: false, status: 403, error: `type LIVE ${symbol} to confirm this live order` };
   return { ok: true };
+}
+
+function acquireLiveOrderLock() {
+  // ponytail: global lock; use per-account locks only if concurrent throughput becomes necessary.
+  if (liveOrderInFlight) return false;
+  liveOrderInFlight = true;
+  return true;
+}
+
+function releaseLiveOrderLock() {
+  liveOrderInFlight = false;
 }
 
 function validateModelPack(pack) {
@@ -978,8 +989,7 @@ async function handleApi(req, res, url) {
       appendAudit({ type: "live_order_rejected", accountId, setupId: body.setupId, reason: validation.error });
       return send(res, 400, validation);
     }
-    if (body.auto && autoOrderInFlight) return send(res, 409, { ok: false, error: "automated order already in flight" });
-    if (body.auto) autoOrderInFlight = true;
+    if (!acquireLiveOrderLock()) return send(res, 409, { ok: false, error: "live order already in flight" });
     try {
       const [accountSummary, contractSearch] = await Promise.all([
         ibkrRequest("GET", `portfolio/${encodeURIComponent(accountId)}/summary`),
@@ -1022,7 +1032,7 @@ async function handleApi(req, res, url) {
       }
       return send(res, 200, result);
     } finally {
-      if (body.auto) autoOrderInFlight = false;
+      releaseLiveOrderLock();
     }
   }
   return send(res, 404, { ok: false, error: "unknown api route" });
@@ -1065,4 +1075,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, acquireLiveOrderLock, releaseLiveOrderLock, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
