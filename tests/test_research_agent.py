@@ -91,6 +91,38 @@ def test_execution_plan_acceptance_enforces_drawdown():
     assert "drawdown" in reason
 
 
+def test_production_strategy_signals_are_prefix_invariant():
+    index = pd.date_range("2024-01-01", periods=400, freq="B")
+    price = pd.Series(
+        100 + np.linspace(0, 60, len(index)) + np.sin(np.arange(len(index)) / 5),
+        index=index,
+    )
+    breadth = pd.Series(np.linspace(0.4, 0.8, len(index)), index=index)
+    benchmark = price * 1.01
+    cutoff = 350
+
+    for name, factory in research_agent.STRATEGIES.items():
+        strategy = factory(holding_period=20, position_type="fixed", fee_pct=0)
+        full = strategy.generate_signals(
+            price,
+            research_agent._indicators(price, breadth, benchmark),
+        )
+        prefix = strategy.generate_signals(
+            price.iloc[:cutoff],
+            research_agent._indicators(
+                price.iloc[:cutoff],
+                breadth.iloc[:cutoff],
+                benchmark.iloc[:cutoff],
+            ),
+        )
+        pd.testing.assert_series_equal(
+            full.iloc[:cutoff],
+            prefix,
+            check_names=False,
+            obj=name,
+        )
+
+
 def test_research_loop_accepts_consistent_out_of_sample_trend(tmp_path):
     index = pd.date_range("2024-01-01", periods=360, freq="B")
     close = pd.Series(np.linspace(50, 140, len(index)), index=index)

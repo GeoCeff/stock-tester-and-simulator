@@ -409,3 +409,10 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - The pre-run exclusion set is now retained in the published protocol and holdout identity; the research engine version advances to `daily-bars-v7`.
 - What worked: expanding the existing family set at its history boundary fixed selection without changing any strategy rule, gate, or holding period.
 - No strategy evaluation, holdout exposure, paper-ledger advancement, provider request, market-data load, IBKR request, or order was made during this audit.
+
+## 2026-07-29 — Signal causality audit
+
+- What worked: all registered production strategies generated identical signals for a historical prefix whether or not later bars were present. Their rolling indicators and delayed decisions are currently causal.
+- A shared prefix-invariance regression check now covers every strategy in the production registry and will fail if future changes introduce a centered window, negative shift, or other future-bar dependency.
+- No strategy rule, parameter, gate, holdout, or engine identity changed.
+- No strategy evaluation, holdout exposure, paper-ledger advancement, provider request, market-data load, IBKR request, or order was made during this audit.
