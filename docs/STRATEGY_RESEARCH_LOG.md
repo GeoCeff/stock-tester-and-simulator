@@ -424,3 +424,11 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - Paper plan identity now includes the news action, and the execution engine version advances to `daily-bars-v8`. The development-qualified shadow lane remains non-actionable and unchanged.
 - What worked: the existing actionable-versus-shadow ledger boundary was sufficient; no new ledger, gate, or dependency was added.
 - No paper position was advanced, and no strategy evaluation, holdout exposure, provider request, market-data load, IBKR request, or order was made during this audit.
+
+## 2026-07-29 — Risk-budget identity and ceiling audit
+
+- Mistake corrected: paper plan identity ignored `risk_pct`, so a changed live risk budget could reuse forward evidence from another budget.
+- Safety gap corrected: the server accepted research and model-pack risk settings as high as 10% of equity despite production strategies using 0.3–0.5%.
+- Paper evidence is now isolated by exact risk percentage. The final server boundary rejects research/model risk above 1%, and the execution engine version advances to `daily-bars-v9`.
+- What worked: the existing plan fingerprint and shared server validators covered both manual and automated live paths.
+- No paper position was advanced, and no strategy evaluation, holdout exposure, provider request, market-data load, IBKR request, or order was made during this audit.

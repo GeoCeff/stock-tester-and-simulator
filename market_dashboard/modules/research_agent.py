@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v8"
+EXECUTION_PLAN_VERSION = "daily-bars-v9"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -518,6 +518,7 @@ def _paper_plan_id(row, cost_bps_per_side):
         f"{row['style']}:{row['strategy']}@{plan_fingerprint}:hold={holding_period}:"
         f"stop={row.get('stop_atr', config['stop_atr']):g}atr:"
         f"target={row.get('target_r', config['target_r']):g}r:"
+        f"risk={row.get('risk_pct', config['risk_pct']):g}:"
         f"entry={row.get('entry_valid_bars', ENTRY_VALID_BARS)}:"
         f"engine={EXECUTION_PLAN_VERSION}:"
         f"cost={cost_bps_per_side:g}bps:"

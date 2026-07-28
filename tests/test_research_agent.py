@@ -1099,6 +1099,7 @@ def test_paper_plan_identity_changes_with_execution_engine(monkeypatch):
         "max_hold": 20,
     }
     original = research_agent._paper_plan_id(row, 10)
+    assert research_agent._paper_plan_id({**row, "risk_pct": 0.01}, 10) != original
 
     def changed_bracket_exit(bar, entry, stop, target, *, fill_bar=False):
         return None, ""

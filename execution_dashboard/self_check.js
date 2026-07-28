@@ -61,9 +61,11 @@ const modelPack = {
   styles: Object.fromEntries(["DAY_TRADE", "OVERNIGHT_1D", "SWING_5D", "SWING_20D"].map((style) => [style, { ...modelStyle }]))
 };
 assert.equal(validateModelPack(modelPack).ok, true);
+assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SWING_5D: { ...modelStyle, enabled: true, stop_atr: 2, target_r: 2, risk_pct: 0.02 } } }).ok, false);
 assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SWING_5D: { ...modelStyle, enabled: true, risk_pct: 2 } } }).ok, false);
 const researchAgent = { schema_version: 1, created_at: "2026-07-25T00:00:00Z", entries: [{ symbol: "AAPL", side: "LONG", style: "SWING_5D", signal_date: "2026-07-25", entry: 200, stop: 190, target: 220, risk_pct: 0.005 }] };
 assert.equal(validateResearchAgent(researchAgent).ok, true);
+assert.equal(validateResearchAgent({ ...researchAgent, entries: [{ ...researchAgent.entries[0], risk_pct: 0.02 }] }).ok, false);
 assert.equal(validateResearchAgent({ ...researchAgent, entries: [{ ...researchAgent.entries[0], stop: 210 }] }).ok, false);
 const validatedCandidate = {
   ...researchAgent.entries[0],

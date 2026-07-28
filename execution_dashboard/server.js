@@ -23,6 +23,7 @@ const RESEARCH_SIGNAL_MAX_AGE_MS = 5 * 86400000;
 const RESEARCH_NEWS_MAX_AGE_MS = 86400000;
 const MAX_DAILY_LOSS_PCT = 0.02;
 const MAX_SPREAD_BPS = 20;
+const MAX_RESEARCH_RISK_PCT = 0.01;
 let autoOrderInFlight = false;
 const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US";
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
@@ -490,7 +491,7 @@ function validateModelPack(pack) {
     ["minProb", "min_probability", 0, 1],
     ["stopAtr", "stop_atr", 0, 20],
     ["targetR", "target_r", 0, 20],
-    ["riskPct", "risk_pct", 0, 0.1]
+    ["riskPct", "risk_pct", 0, MAX_RESEARCH_RISK_PCT]
   ];
   for (const style of MODEL_PACK_STYLES) {
     const row = pack.styles[style];
@@ -544,7 +545,7 @@ function validateResearchAgent(result) {
     if (![price, stop, target].every(Number.isFinite) || stop <= 0 || stop >= price || target <= price) {
       return { ok: false, error: `${label}: invalid bracket prices` };
     }
-    if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > 0.1) return { ok: false, error: `${label}: invalid risk_pct` };
+    if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > MAX_RESEARCH_RISK_PCT) return { ok: false, error: `${label}: invalid risk_pct` };
   }
   return { ok: true };
 }
