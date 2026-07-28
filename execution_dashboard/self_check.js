@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -108,6 +108,10 @@ assert.equal(validateResearchContract(contractOrders, "AAPL", aaplContract).ok, 
 assert.equal(validateResearchContract(contractOrders.map((order) => ({ ...order, conid: 272093 })), "AAPL", aaplContract).ok, false);
 assert.equal(validateResearchContract(contractOrders.map((order, index) => ({ ...order, conid: index ? 272093 : 265598 })), "AAPL", aaplContract).ok, false);
 assert.equal("outsideRTH" in canonicalResearchOrders(contractOrders.map((order) => ({ ...order, outsideRTH: true })))[0], false);
+assert.equal(validateIbkrOrderAcknowledgement({ ok: true, data: [{ order_id: "123", order_status: "Submitted" }] }).ok, true);
+assert.equal(validateIbkrOrderAcknowledgement({ ok: false, error: "gateway unavailable" }).ok, false);
+assert.equal(validateIbkrOrderAcknowledgement({ ok: true, data: [{ id: "warning", message: ["Confirm order"] }] }).status, 409);
+assert.equal(validateIbkrOrderAcknowledgement({ ok: true, data: [{ status: "Success" }] }).ok, false);
 const autoBody = { auto: true, accountId: "U123", orders: [{ conid: 265598, quantity: 2, price: 200 }] };
 const autoSources = {
   accountSummary: { ok: true, data: { netliquidation: { amount: 100000 }, availablefunds: { amount: 50000 } } },

@@ -376,3 +376,10 @@ Reference: [Pairs Trading: Performance of a Relative Value Arbitrage Rule](https
 - First real-data run: `low_vol_trend` produced two shadow-only plans, JPM and UNH, dated 2026-07-24. Actionable entries remained zero and both ledgers remain `warming_up`.
 
 Decision: stop adding historical variants for now. Accumulate genuinely future bars in the shadow ledger, treat the observations as research diagnostics only, and require a separate final-holdout pass before any strategy can enter the actionable paper lane.
+
+## 2026-07-28 — Broker acknowledgement audit
+
+- Mistake corrected: the local server converted every IBKR order response into HTTP success, so the dashboard could record a gateway failure or precautionary warning as a submitted live order.
+- Live submission now fails closed unless every returned broker response row carries an order ID. Warning-only responses remain unacknowledged and the dashboard does not add them to tracked orders or increment its auto-trade count.
+- What worked: one response check at the shared server boundary covers manual and automated submission without changing browser order-state logic.
+- No IBKR request, order, strategy evaluation, paper-ledger advancement, provider request, or market-data load was made during this audit.

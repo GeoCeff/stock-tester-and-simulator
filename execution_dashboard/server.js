@@ -691,6 +691,18 @@ function canonicalResearchOrders([entry, target, stop]) {
   ];
 }
 
+function validateIbkrOrderAcknowledgement(result) {
+  if (!result?.ok) return { ok: false, status: 502, error: result?.error || "IBKR order request failed" };
+  const rows = Array.isArray(result.data) ? result.data : [result.data];
+  if (rows.some((row) => row?.id && row?.message && !row?.order_id && !row?.orderId)) {
+    return { ok: false, status: 409, error: "IBKR returned an unacknowledged order warning; no order was submitted" };
+  }
+  const orderIds = rows.map((row) => row?.order_id ?? row?.orderId).filter((id) => id !== undefined && id !== null && String(id).trim());
+  return rows.length && orderIds.length === rows.length
+    ? { ok: true, orderIds }
+    : { ok: false, status: 502, error: "IBKR did not acknowledge every order with an order ID" };
+}
+
 function ibkrRequest(method, endpoint, body) {
   return new Promise((resolve) => {
     const target = new URL(`${IBKR_BASE.replace(/\/$/, "")}/${endpoint.replace(/^\//, "")}`);
@@ -1002,6 +1014,11 @@ async function handleApi(req, res, url) {
       const intent = appendAudit({ type: "live_order_intent", accountId, setupId: body.setupId, auto: body.auto === true, orders: brokerOrders });
       const result = await ibkrRequest("POST", `iserver/account/${encodeURIComponent(accountId)}/orders`, brokerOrders);
       appendAudit({ type: "live_order_response", accountId, setupId: body.setupId, intentTime: intent.time, result });
+      const acknowledgement = validateIbkrOrderAcknowledgement(result);
+      if (!acknowledgement.ok) {
+        appendAudit({ type: "live_order_not_submitted", accountId, setupId: body.setupId, reason: acknowledgement.error });
+        return send(res, acknowledgement.status, { ...acknowledgement, broker: result });
+      }
       return send(res, 200, result);
     } finally {
       if (body.auto) autoOrderInFlight = false;
@@ -1047,4 +1064,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
