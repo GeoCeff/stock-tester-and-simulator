@@ -7,9 +7,12 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
+import zipfile
 from datetime import datetime, time as clock_time, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -22,6 +25,7 @@ from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, DEFAULT_CA
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
 NEWS_SNAPSHOT_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "market_research_snapshot.json"
 WATCH_LOCK_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "research_agent.lock"
+RESEARCH_SNAPSHOT_DIR = Path(__file__).resolve().parent / "execution_dashboard" / "data" / "research_snapshots"
 NEWS_SNAPSHOT_MAX_AGE = timedelta(minutes=30)
 MIN_HISTORY_COVERAGE = 0.90
 MAX_LATEST_BAR_AGE_DAYS = 7
@@ -73,14 +77,19 @@ def validate_research_data(data, status, symbols, start, end, warmup, folds, *, 
             raise RuntimeError(f"{symbol} has invalid OHLC prices")
 
 
+def _canonical_ohlc_csv(data, symbol):
+    frame = get_ticker_frame(data, symbol)[["Open", "High", "Low", "Close"]].dropna().sort_index()
+    return frame, frame.to_csv(date_format="%Y-%m-%d", float_format="%.10g").encode("utf-8")
+
+
 def research_data_provenance(data, status, symbols):
     """Describe and fingerprint the exact validated OHLC snapshot used by a run."""
     digest = hashlib.sha256()
     coverage = {}
     for symbol in sorted(symbols):
-        frame = get_ticker_frame(data, symbol)[["Open", "High", "Low", "Close"]].dropna().sort_index()
+        frame, csv_bytes = _canonical_ohlc_csv(data, symbol)
         digest.update(symbol.encode("utf-8"))
-        digest.update(frame.to_csv(date_format="%Y-%m-%d", float_format="%.10g").encode("utf-8"))
+        digest.update(csv_bytes)
         coverage[symbol] = {
             "first": str(frame.index.min().date()),
             "last": str(frame.index.max().date()),
@@ -105,6 +114,58 @@ def research_data_provenance(data, status, symbols):
         "coverage": coverage,
         "pandas_version": pd.__version__,
         "numpy_version": np.__version__,
+    }
+
+
+def verify_research_snapshot(path, symbols, expected_sha256):
+    """Fail closed unless an archive contains the exact canonical run inputs."""
+    digest = hashlib.sha256()
+    expected_entries = {f"{quote(symbol, safe='')}.csv" for symbol in symbols}
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if set(archive.namelist()) != expected_entries or len(archive.namelist()) != len(expected_entries):
+                raise RuntimeError("research snapshot has unexpected or duplicate entries")
+            for symbol in sorted(symbols):
+                digest.update(symbol.encode("utf-8"))
+                digest.update(archive.read(f"{quote(symbol, safe='')}.csv"))
+    except (OSError, KeyError, zipfile.BadZipFile) as error:
+        raise RuntimeError(f"research snapshot is unreadable: {error}") from error
+    if digest.hexdigest() != expected_sha256:
+        raise RuntimeError("research snapshot hash does not match validated market data")
+
+
+def persist_research_snapshot(data, symbols, provenance, directory=RESEARCH_SNAPSHOT_DIR):
+    """Write one immutable, deduplicated archive for the exact validated OHLC data."""
+    directory.mkdir(parents=True, exist_ok=True)
+    dataset_hash = provenance["dataset_sha256"]
+    path = directory / f"{dataset_hash}.zip"
+    if path.exists():
+        verify_research_snapshot(path, symbols, dataset_hash)
+    else:
+        with tempfile.NamedTemporaryFile(dir=directory, suffix=".tmp", delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+        try:
+            with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_STORED) as archive:
+                for symbol in sorted(symbols):
+                    _, csv_bytes = _canonical_ohlc_csv(data, symbol)
+                    info = zipfile.ZipInfo(f"{quote(symbol, safe='')}.csv")
+                    info.date_time = (1980, 1, 1, 0, 0, 0)
+                    archive.writestr(info, csv_bytes)
+            verify_research_snapshot(temporary_path, symbols, dataset_hash)
+            try:
+                os.link(temporary_path, path)
+            except FileExistsError:
+                verify_research_snapshot(path, symbols, dataset_hash)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+    try:
+        recorded_path = path.relative_to(Path(__file__).resolve().parent)
+    except ValueError:
+        recorded_path = path
+    return {
+        **provenance,
+        "snapshot_format": "ohlc-csv-zip-v1",
+        "snapshot_path": recorded_path.as_posix(),
     }
 
 
@@ -212,6 +273,7 @@ def run_once(args):
     if getattr(args, "preflight_only", False):
         print(json.dumps(provenance, indent=2, sort_keys=True))
         return {"status": "preflight_only", "data_provenance": provenance}
+    provenance = persist_research_snapshot(data, [*universe, BENCHMARK_SYMBOL], provenance)
 
     result = run_research_loop(
         data,

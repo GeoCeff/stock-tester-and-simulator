@@ -1,5 +1,15 @@
 # Strategy Research Log
 
+## 2026-07-29 — Reproducible point-in-time input snapshots
+
+- Evidence gap corrected: research records retained a deterministic OHLC hash and coverage metadata, but not the exact provider bytes needed to reproduce a run after adjusted history changes.
+- Ordinary validated runs now preserve the same canonical per-symbol OHLC CSV bytes used by the fingerprint in an immutable, deduplicated standard ZIP archive. The run records its format and path.
+- Existing archives are verified before reuse. Unexpected, duplicate, unreadable, or hash-mismatched contents fail closed before strategy evaluation instead of being overwritten.
+- `--preflight-only` remains non-mutating. Focused tests prove exact verification, deduplication, corruption rejection, and the preflight boundary.
+- Real-data smoke run `2026-07-29T15:46:16Z` retained and independently reverified Yahoo snapshot `18a24b89…e5ecd0` for all 20 fixed stocks plus SPY through 2026-07-28. It evaluated only the frozen primary, exposed no holdout, produced no actionable entries, and left exact-plan paper evidence at 0 closed trades.
+
+Decision: retain exact inputs for audit and reproduction; do not treat snapshot retention as new market evidence or authorization to expose the holdout.
+
 ## 2026-07-29 — Daily mark-to-market drawdown
 
 - Methodology mistake corrected: v13 moved portfolio equity only when trades exited. A position could suffer a large open loss, recover before exit, and hide the actual drawdown used by the 15% acceptance gate.

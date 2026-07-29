@@ -4,6 +4,7 @@ import pytest
 from types import SimpleNamespace
 
 import json
+import zipfile
 
 import market_dashboard.modules.research_agent as research_agent
 import run_research_agent as research_runner
@@ -24,6 +25,7 @@ def test_runner_records_holdout_result_when_postprocessing_fails(monkeypatch):
     ))
     monkeypatch.setattr(research_runner, "validate_research_data", lambda *args, **kwargs: None)
     monkeypatch.setattr(research_runner, "research_data_provenance", lambda *args, **kwargs: {"dataset_sha256": "test"})
+    monkeypatch.setattr(research_runner, "persist_research_snapshot", lambda data, symbols, provenance: provenance)
     monkeypatch.setattr(research_runner, "recent_rejected_holdout_trials", lambda: set())
     def fake_research_loop(*args, **kwargs):
         runner_kwargs.update(kwargs)
@@ -59,6 +61,7 @@ def test_preflight_only_validates_data_without_evaluating_or_writing(monkeypatch
     monkeypatch.setattr(research_runner, "research_data_provenance", lambda *args, **kwargs: {
         "dataset_sha256": "validated-snapshot",
     })
+    monkeypatch.setattr(research_runner, "persist_research_snapshot", lambda *args, **kwargs: pytest.fail("preflight wrote a snapshot"))
     monkeypatch.setattr(research_runner, "run_research_loop", lambda *args, **kwargs: pytest.fail("preflight evaluated a strategy"))
     monkeypatch.setattr(research_runner, "publish_research_result", lambda *args, **kwargs: pytest.fail("preflight wrote a result"))
 
@@ -177,6 +180,35 @@ def test_research_data_provenance_fingerprints_exact_ohlc_values():
         "last": "2026-01-06",
         "rows": 2,
     }
+
+
+def test_research_snapshot_persists_exact_data_and_fails_closed_on_corruption(tmp_path):
+    index = pd.date_range("2026-01-05", periods=2, freq="B")
+    data = pd.DataFrame({
+        (field, symbol): [100, 101]
+        for symbol in ("TEST", "SPY")
+        for field in ("Open", "High", "Low", "Close")
+    }, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    symbols = ["TEST", "SPY"]
+    provenance = research_runner.research_data_provenance(
+        data, {"source": "Yahoo Finance", "is_demo": False}, symbols
+    )
+
+    saved = research_runner.persist_research_snapshot(data, symbols, provenance, tmp_path)
+    path = tmp_path / f"{provenance['dataset_sha256']}.zip"
+    first_bytes = path.read_bytes()
+    research_runner.persist_research_snapshot(data, symbols, provenance, tmp_path)
+
+    assert path.read_bytes() == first_bytes
+    assert saved["snapshot_format"] == "ohlc-csv-zip-v1"
+    assert saved["snapshot_path"].endswith(f"{provenance['dataset_sha256']}.zip")
+    research_runner.verify_research_snapshot(path, symbols, provenance["dataset_sha256"])
+
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("TEST.csv", b"corrupt")
+    with pytest.raises(RuntimeError, match="unexpected or duplicate entries"):
+        research_runner.persist_research_snapshot(data, symbols, provenance, tmp_path)
 
 
 def test_research_metrics_include_starting_capital_and_reject_nonfinite_returns():
