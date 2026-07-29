@@ -1813,6 +1813,48 @@ button:active:not(:disabled) {
   background: rgba(15, 23, 36, .86);
 }
 
+.command-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  padding: 0 16px 12px;
+}
+
+.command-strip article {
+  border-color: rgba(244, 248, 255, .10);
+  border-radius: 0;
+  background: rgba(11, 17, 27, .72);
+  box-shadow: none;
+}
+
+.command-strip article:first-child {
+  border-radius: 12px 0 0 12px;
+}
+
+.command-strip article:last-child {
+  border-radius: 0 12px 12px 0;
+}
+
+.command-strip article + article {
+  border-left: 0;
+}
+
+.command-strip article::before {
+  display: none;
+}
+
+.command-strip span {
+  color: #8a8a92;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: .1em;
+}
+
+.command-strip strong {
+  color: #f4f4f5;
+  font-size: 12px;
+}
+
 .simple-mode .workspace {
   height: max(640px, calc(100vh - 198px));
 }
@@ -1932,6 +1974,11 @@ button:active:not(:disabled) {
     overflow-x: auto;
     margin: 0;
     padding: 0;
+    scrollbar-width: none;
+  }
+
+  .app-nav::-webkit-scrollbar {
+    display: none;
   }
 
   .app-nav button {
@@ -1958,6 +2005,7 @@ button:active:not(:disabled) {
     align-items: center;
     gap: 10px;
     min-height: 78px;
+    overflow-x: hidden;
     padding-block: 8px;
   }
 
@@ -1968,6 +2016,11 @@ button:active:not(:disabled) {
     justify-content: flex-start;
     overflow-x: auto;
     padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+
+  .top-metrics::-webkit-scrollbar {
+    display: none;
   }
 
   .top-metrics > * {
@@ -2016,6 +2069,24 @@ button:active:not(:disabled) {
 
   .workflow-strip {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .command-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .command-strip article,
+  .command-strip article:first-child,
+  .command-strip article:last-child {
+    border-radius: 0;
+  }
+
+  .command-strip article:nth-child(2n + 1) {
+    border-left: 1px solid rgba(244, 248, 255, .10);
+  }
+
+  .command-strip article:nth-child(n + 3) {
+    border-top: 0;
   }
 
   .workspace,
@@ -2125,6 +2196,16 @@ button:active:not(:disabled) {
 
   .workflow-strip {
     padding-inline: 8px;
+  }
+
+  .command-strip {
+    grid-template-columns: 1fr;
+    padding-inline: 8px;
+  }
+
+  .command-strip article + article {
+    border-top: 0;
+    border-left: 1px solid rgba(244, 248, 255, .10);
   }
 
   .decision-main h2 {

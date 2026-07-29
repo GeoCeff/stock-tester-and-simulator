@@ -1,5 +1,16 @@
 # Strategy Research Log
 
+## 2026-07-29 — Narrow research mandate
+
+- `low_vol_trend` remains the single primary strategy with its 200-day trend, 63-day momentum, and below-median volatility rules frozen.
+- Defensive / low beta remains the only future challenger and must be registered as a separate experiment using materially new point-in-time data.
+- Keep the objective 20-stock liquid universe. Exclusions may use only predeclared liquidity, spread, data-quality, corporate-action, or broker-availability rules; historical winners must not be selected after the fact.
+- The dashboard optimizer was removed because ranking nearby rule variants conflicts with the fixed-protocol evidence policy. The UI now shows the active strategy, paper progress, universe policy, and next valid evidence directly.
+- News remains an execution veto or size reduction, never a source of profitability evidence or a trade signal.
+- No research run, paper-ledger advancement, provider request, broker request, order, commit, or push was made while adopting this mandate.
+
+Decision: reduce strategy-selection degrees of freedom and obtain the next evidence prospectively rather than improving a backtest by narrowing stocks or tuning nearby rules.
+
 ## Durable strategy watchlist
 
 | Priority | Family | Representative strategies | Current posture | Next valid evidence |
@@ -16,6 +27,8 @@
 | Out of scope for current data | Volatility / options | Covered calls, volatility carry, dispersion | Daily stock bars cannot validate option surfaces, assignment, spreads, or margin. | Historical option-chain and execution data. |
 
 Watchlist labels are research priorities, not trade recommendations. No family becomes actionable without development consistency, an untouched final holdout, and exact-plan forward paper validation.
+
+The `low_vol_trend` priority is a deterministic tie-breaker only: it wins an exact executable development-score tie but never overrides stronger evidence, a family cooldown, or any acceptance gate.
 
 ## 2026-07-28 — Shared live-risk boundary
 
@@ -87,6 +100,7 @@ Decision: retain news as a freshness-bound execution risk gate, never as evidenc
 
 - Mistake corrected: the final server boundary accepted a five-day-old agent result and an untimestamped `news_action: pass`. Agent results and embedded news approvals now expire after 24 hours; signals expire after five calendar days.
 - Mistake corrected: an empty plan ID could reach exact-plan matching. Live validation now requires a nonempty current plan ID, `news_status: ok`, and a valid nonfuture news timestamp.
+- Mistake corrected: a fresh approval could still predate the exact research snapshot it purported to review. UI readiness and final server validation now require `news_created_at >= agent.created_at`.
 - Worked: the final server already required the exact paper-validated plan, exact entry/target/stop prices, a three-order parent bracket, and an explicit live-order startup flag.
 - No order, news refresh, strategy run, or brokerage request was made during this audit.
 
@@ -436,10 +450,20 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 ## 2026-07-29 — Missing-bar imputation audit
 
 - Mistake corrected: shared provider cleaning forward-filled every OHLCV column, so a missing bar for one symbol became a fabricated copy of its prior bar whenever another symbol traded that date.
+- Mistake corrected: SPY was not part of the shared complete-OHLC calendar and benchmark indicators forward-filled its missing observations.
 - Missing provider values now remain missing. The research loop's shared complete-OHLC calendar removes those dates before folds, indicators, holdout identity, and candidate publication.
+- When benchmark-confirmed rules are candidates, SPY now joins the alignment set and its indicator input is no longer forward-filled.
 - The research engine version advances to `daily-bars-v10`, preventing evidence from the imputed v9 data path from validating the corrected path.
 - What worked: deleting one global forward-fill restored the missingness already handled by downstream validation and alignment.
 - No provider request, market-data load, strategy evaluation, holdout exposure, paper-ledger advancement, IBKR request, or order was made during this audit.
+
+## 2026-07-29 — Incomplete daily-session audit
+
+- Mistake corrected: recognized-provider validation accepted a current New York daily bar before the regular session had finished, allowing partial OHLC values into folds and candidate signals.
+- A current-session bar now fails closed until 16:15 New York time, leaving a short provider-finalization buffer after the regular close.
+- What worked: the standard-library timezone database handles daylight saving time; no exchange-calendar or scheduling dependency was added.
+- Known ceiling: early-close sessions wait conservatively until 16:15. Add an exchange calendar only if same-day early-close processing becomes necessary.
+- No provider request, market-data load, strategy evaluation, holdout exposure, paper-ledger advancement, IBKR request, order, commit, or push was made during this audit.
 
 ## 2026-07-29 — Concurrent live-submission audit
 
@@ -456,3 +480,26 @@ Decision: stop adding historical variants for now. Accumulate genuinely future b
 - The research engine version advances to `daily-bars-v11`, isolating corrected evidence from the permissive v10 path.
 - What worked: one validation at the shared per-plan metric boundary covers every actionable and shadow ledger summary.
 - No paper position was advanced, and no strategy evaluation, holdout exposure, provider request, market-data load, IBKR request, or order was made during this audit.
+
+## 2026-07-29 — Paper-evidence identity and chronology audit
+
+- Mistake corrected: repeated copies of the same five closed trades could satisfy the 30-trade minimum and falsely validate a paper plan.
+- Mistake corrected: closed trades with exits dated before their signals could also satisfy every paper acceptance metric.
+- Mistake corrected: the ledger accepted exits dated after the research run, allowing unavailable future evidence into metrics.
+- Mistake corrected: a closed row did not need a fill date, so an unfilled signal could be represented as completed evidence.
+- Mistake corrected: metrics trusted each stored return without reconciling it to the recorded fill, exit, and cost assumption.
+- Mistake corrected: paper drawdown compounded simultaneous exits one trade at a time, making risk depend on arbitrary row order.
+- Closed evidence now fails before metrics unless every trade has a unique identity, proves `signal < fill <= exit <= run as-of`, and has a finite return exactly reconciled to positive prices and recorded nonnegative costs.
+- Paper drawdown now reuses the execution replay's chronological equal-weight exit-date cohorts.
+- The research engine version advances to `daily-bars-v12`, isolating corrected evidence from the permissive v11 path.
+- What worked: one validation block at the shared per-plan metric boundary covers actionable and shadow evidence without a new abstraction or dependency.
+- No paper position was advanced, and no strategy evaluation, holdout exposure, provider request, market-data load, IBKR request, order, commit, or push was made during this audit.
+
+## 2026-07-29 — Holdout-failure durability audit
+
+- Mistake corrected: research history was written after news and both paper ledgers, so a downstream failure could lose a final-holdout rejection and allow the same family to reuse that holdout on the next run.
+- Mistake corrected: the 200-record history tail could evict a still-active rejection after frequent monitoring runs, silently shortening the predeclared 90-day cooldown.
+- The runner now records the completed research result in a `finally` block, preserving cooldown evidence even when publishing, news, or paper post-processing fails.
+- History trimming now preserves at most one additional active rejection record for each strategy family absent from the normal bounded tail.
+- What worked: the existing JSONL history remains the sole cooldown source; no new state file, schema, or dependency was added.
+- No strategy evaluation, holdout exposure, provider request, market-data load, paper-ledger advancement, IBKR request, order, commit, or push was made during this audit.

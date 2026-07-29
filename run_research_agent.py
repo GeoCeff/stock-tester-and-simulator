@@ -7,8 +7,9 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as clock_time, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -23,9 +24,10 @@ WATCH_LOCK_PATH = Path(__file__).resolve().parent / "execution_dashboard" / "dat
 NEWS_SNAPSHOT_MAX_AGE = timedelta(minutes=30)
 MIN_HISTORY_COVERAGE = 0.90
 MAX_LATEST_BAR_AGE_DAYS = 7
+MARKET_DATA_READY_TIME = clock_time(16, 15)
 
 
-def validate_research_data(data, status, symbols, start, end, warmup, folds):
+def validate_research_data(data, status, symbols, start, end, warmup, folds, *, now=None):
     """Fail closed unless the research frame has current, complete real OHLC data."""
     if status.get("is_demo") or status.get("source") not in {DATA_SOURCE_YAHOO, DATA_SOURCE_STOOQ}:
         raise RuntimeError("refusing research without a recognized real-data provider")
@@ -39,6 +41,9 @@ def validate_research_data(data, status, symbols, start, end, warmup, folds):
     end = pd.Timestamp(end)
     if data.index.max() >= end:
         raise RuntimeError("market data contains a future bar")
+    now = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("America/New_York"))
+    if pd.Timestamp(data.index.max()).date() >= now.date() and now.time() < MARKET_DATA_READY_TIME:
+        raise RuntimeError("market data contains an incomplete current session")
     minimum_rows = warmup + folds * 10
     minimum_span = (end - start).days * MIN_HISTORY_COVERAGE
     latest_cutoff = end - pd.Timedelta(days=MAX_LATEST_BAR_AGE_DAYS + 1)
@@ -183,19 +188,21 @@ def run_once(args):
             "is_demo",
         )
     }
-    publish_research_result(result)
-    news_status = refresh_news()
-    apply_news_snapshot(result)
-    result["paper_evidence"] = update_paper_ledger(result, data, cost_bps_per_side=args.cost_bps)
-    result["shadow_evidence"] = update_paper_ledger(
-        {"created_at": result["created_at"], "entries": result["shadow_entries"]},
-        data,
-        path=DEFAULT_SHADOW_LEDGER_PATH,
-        cost_bps_per_side=args.cost_bps,
-        cancel_withdrawn=False,
-    )
-    publish_research_result(result)
-    append_research_history(result)
+    try:
+        publish_research_result(result)
+        news_status = refresh_news()
+        apply_news_snapshot(result)
+        result["paper_evidence"] = update_paper_ledger(result, data, cost_bps_per_side=args.cost_bps)
+        result["shadow_evidence"] = update_paper_ledger(
+            {"created_at": result["created_at"], "entries": result["shadow_entries"]},
+            data,
+            path=DEFAULT_SHADOW_LEDGER_PATH,
+            cost_bps_per_side=args.cost_bps,
+            cancel_withdrawn=False,
+        )
+        publish_research_result(result)
+    finally:
+        append_research_history(result)
     passed = [style for style, row in result["styles"].items() if row["acceptance"]["status"] == "pass"]
     print(f"{result['created_at']} evaluated {result['evaluated_candidates']} candidates from {status.get('source', 'market data')}")
     print(f"Passed styles: {', '.join(passed) if passed else 'none; execution remains blocked'}")

@@ -120,7 +120,7 @@ Added validation layers:
 - Tracked open/closed paper/live orders.
 - Kill switch reasons.
 - Replay/backtest summary.
-- Rule optimizer.
+- Fixed research protocol showing the primary strategy, objective universe, evidence requirements, and anti-overfitting rules.
 - Post-trade attribution.
 - What works / what fails dashboards.
 - Model registry and feature-importance view.

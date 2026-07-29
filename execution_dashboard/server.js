@@ -589,6 +589,7 @@ function validateResearchOrder(body, agent, accountEquity, now = Date.now()) {
     candidate.news_action !== "pass"
     || candidate.news_status !== "ok"
     || !Number.isFinite(newsAt)
+    || newsAt < createdAt
     || newsAt > now + 300000
     || now - newsAt > RESEARCH_NEWS_MAX_AGE_MS
   ) return { ok: false, error: "current news gate does not approve live execution" };

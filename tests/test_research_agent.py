@@ -1,12 +1,47 @@
 import numpy as np
 import pandas as pd
 import pytest
+from types import SimpleNamespace
 
 import json
 
 import market_dashboard.modules.research_agent as research_agent
 import run_research_agent as research_runner
 from market_dashboard.modules.research_agent import append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
+
+
+def test_runner_records_holdout_result_when_postprocessing_fails(monkeypatch):
+    result = {
+        "created_at": "2026-07-29T00:00:00Z",
+        "entries": [],
+        "shadow_entries": [],
+    }
+    recorded = []
+    monkeypatch.setattr(research_runner, "load_market_data", lambda *args, **kwargs: (
+        pd.DataFrame({"Close": [100]}),
+        {"source": "Yahoo Finance", "is_demo": False},
+    ))
+    monkeypatch.setattr(research_runner, "validate_research_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(research_runner, "recent_rejected_holdout_trials", lambda: set())
+    monkeypatch.setattr(research_runner, "run_research_loop", lambda *args, **kwargs: result)
+    monkeypatch.setattr(research_runner, "publish_research_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(research_runner, "refresh_news", lambda: "")
+    monkeypatch.setattr(research_runner, "apply_news_snapshot", lambda *args, **kwargs: None)
+    def fail_ledger(*args, **kwargs):
+        raise RuntimeError("ledger failed")
+    monkeypatch.setattr(research_runner, "update_paper_ledger", fail_ledger)
+    monkeypatch.setattr(research_runner, "append_research_history", recorded.append)
+
+    with pytest.raises(RuntimeError, match="ledger failed"):
+        research_runner.run_once(SimpleNamespace(
+            symbols="TEST",
+            years=1,
+            folds=4,
+            warmup=20,
+            cost_bps=10,
+        ))
+
+    assert recorded == [result]
 
 
 def test_research_data_gate_requires_current_complete_real_ohlc():
@@ -31,6 +66,15 @@ def test_research_data_gate_requires_current_complete_real_ohlc():
 
     research_runner.validate_research_data(
         data, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4
+    )
+    with pytest.raises(RuntimeError, match="incomplete current session"):
+        research_runner.validate_research_data(
+            data, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4,
+            now=pd.Timestamp("2025-01-31T20:00:00Z").to_pydatetime(),
+        )
+    research_runner.validate_research_data(
+        data, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4,
+        now=pd.Timestamp("2025-01-31T22:00:00Z").to_pydatetime(),
     )
 
     with pytest.raises(RuntimeError, match="missing required symbols"):
@@ -273,6 +317,48 @@ def test_research_loop_uses_one_shared_complete_ohlc_calendar(monkeypatch):
     assert result["holdout"]["start"] == str(common_dates[final_start].date())
 
 
+def test_benchmark_strategy_calendar_excludes_missing_spy_bar(monkeypatch):
+    index = pd.date_range("2024-01-01", periods=260, freq="B")
+    close = pd.Series(np.linspace(100, 130, len(index)), index=index)
+    data = pd.DataFrame({
+        (field, symbol): close
+        for symbol in ("AAA", "SPY")
+        for field in ("Open", "High", "Low", "Close")
+    })
+    missing_date = index[-60]
+    data.loc[missing_date, pd.IndexSlice[:, "SPY"]] = np.nan
+    seen_dates = []
+
+    def fake_evaluate(frame, universe, candidate, **kwargs):
+        seen_dates.extend(frame.index)
+        metric = {
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy": 0.0,
+            "profit_factor": 0.0,
+            "max_drawdown": 0.0,
+            "total_return": 0.0,
+        }
+        return {
+            **candidate,
+            "development": {**metric, "positive_fold_ratio": 0.0},
+            "final": metric,
+            "folds": [metric],
+            "score": 0.0,
+        }
+
+    monkeypatch.setattr(research_agent, "evaluate_candidate", fake_evaluate)
+    run_research_loop(
+        data,
+        ["AAA"],
+        candidates=[{"style": "SWING_20D", "strategy": "benchmark_confirmed_trend"}],
+        folds=4,
+        warmup=200,
+    )
+
+    assert missing_date not in seen_dates
+
+
 def test_research_loop_skips_high_score_candidate_that_fails_development_gates(monkeypatch):
     index = pd.date_range("2024-01-01", periods=360, freq="B")
     data = pd.DataFrame({("Close", "TEST"): np.arange(360) + 100}, index=index)
@@ -460,6 +546,22 @@ def test_research_loop_selects_best_executable_plan_not_best_signal_score(monkey
     assert final_exposures == ["signal_best"]
     assert result["research_protocol"]["excluded_holdout_trials"] == [{"style": "SWING_20D", "strategy": "plan_best"}]
 
+    final_exposures.clear()
+    monkeypatch.setattr(research_agent, "_execution_score", lambda evaluation: 1)
+    result = run_research_loop(
+        data,
+        ["TEST"],
+        candidates=[
+            {"style": "SWING_20D", "strategy": "trend_momentum"},
+            {"style": "SWING_20D", "strategy": "low_vol_trend"},
+        ],
+        folds=4,
+        warmup=200,
+    )
+
+    assert result["styles"]["SWING_20D"]["strategy"] == "low_vol_trend"
+    assert final_exposures == ["low_vol_trend"]
+
 
 def test_development_reject_does_not_masquerade_as_final_holdout(monkeypatch):
     index = pd.date_range("2024-01-01", periods=360, freq="B")
@@ -593,6 +695,38 @@ def test_research_history_is_deduplicated_and_bounded(tmp_path):
     assert records[-1]["data_provenance"]["source"] == "Yahoo Finance"
 
 
+def test_research_history_retains_unexpired_cooldown_beyond_monitoring_cap(tmp_path):
+    path = tmp_path / "history.jsonl"
+    rejection = {
+        "created_at": "2026-07-01T00:00:00Z",
+        "styles": {
+            "SWING_20D": {
+                "strategy": "low_vol_trend",
+                "acceptance": {"status": "reject", "reason": "holdout failed"},
+                "metrics": {"holdout_exposed": True},
+            },
+        },
+    }
+    monitoring = {
+        "styles": {
+            "SWING_20D": {
+                "strategy": "low_vol_trend",
+                "acceptance": {"status": "reject", "reason": "cooldown"},
+                "metrics": {"holdout_exposed": False},
+            },
+        },
+    }
+
+    append_research_history(rejection, path=path, max_records=2)
+    append_research_history({**monitoring, "created_at": "2026-07-02T00:00:00Z"}, path=path, max_records=2)
+    append_research_history({**monitoring, "created_at": "2026-07-03T00:00:00Z"}, path=path, max_records=2)
+
+    assert ("SWING_20D", "low_vol_trend") in recent_rejected_holdout_trials(
+        path=path,
+        now=pd.Timestamp("2026-07-03", tz="UTC").to_pydatetime(),
+    )
+
+
 def test_recent_rejected_holdout_trials_ignores_passes_and_expired_trials(tmp_path):
     path = tmp_path / "history.jsonl"
     path.write_text("\n".join([
@@ -691,7 +825,7 @@ def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
     path = tmp_path / "paper.json"
 
     assert update_paper_ledger(result, data.iloc[:1], path=path)["closed_trades"] == 0
-    summary = update_paper_ledger(result, data, path=path)
+    summary = update_paper_ledger({**result, "created_at": "2026-01-06T22:00:00Z"}, data, path=path)
     ledger = json.loads(path.read_text(encoding="utf-8"))
 
     assert summary["closed_trades"] == 1
@@ -966,8 +1100,12 @@ def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
                 "style": "SWING_20D",
                 "strategy": "old_strategy",
                 "plan_id": "old-plan",
-                "signal_date": "2025-01-01",
+                "signal_date": str((pd.Timestamp("2024-12-31") + pd.Timedelta(days=index * 4)).date()),
+                "entry_date": str((pd.Timestamp("2025-01-01") + pd.Timedelta(days=index * 4)).date()),
                 "exit_date": str((pd.Timestamp("2025-01-01") + pd.Timedelta(days=index * 4)).date()),
+                "entry": 100,
+                "exit": 101.2,
+                "cost_bps_per_side": 10,
                 "return": 0.01,
             }
             for index in range(30)
@@ -975,15 +1113,19 @@ def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
             {
                 "symbol": "ORDER",
                 "style": "SWING_20D",
-                "signal_date": "2025-01-01",
+                "signal_date": signal_date,
                 "plan_id": "out-of-order",
+                "entry_date": exit_date,
                 "exit_date": exit_date,
+                "entry": 100,
+                "exit": 100 * (1 + trade_return + 0.002),
+                "cost_bps_per_side": 10,
                 "return": trade_return,
             }
-            for exit_date, trade_return in (
-                ("2025-01-03", -0.2),
-                ("2025-01-01", -0.2),
-                ("2025-01-02", 0.3),
+            for signal_date, exit_date, trade_return in (
+                ("2024-12-31", "2025-01-03", -0.2),
+                ("2024-12-30", "2025-01-01", -0.2),
+                ("2024-12-29", "2025-01-02", 0.3),
             )
         ] + [
             {
@@ -991,7 +1133,11 @@ def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
                 "style": "SWING_20D",
                 "signal_date": "2025-01-01",
                 "plan_id": "initial-loss",
+                "entry_date": "2025-01-02",
                 "exit_date": "2025-01-02",
+                "entry": 100,
+                "exit": 80.2,
+                "cost_bps_per_side": 10,
                 "return": -0.2,
             }
         ],
@@ -1017,6 +1163,38 @@ def test_old_plan_trades_cannot_validate_current_plan(tmp_path):
     assert np.isclose(summary["by_plan"]["initial-loss"]["max_drawdown"], -0.2)
 
 
+def test_paper_drawdown_uses_equal_weight_exit_date_cohorts(tmp_path):
+    path = tmp_path / "paper.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": [
+            {
+                "symbol": symbol,
+                "style": "SWING_20D",
+                "plan_id": "same-day",
+                "signal_date": "2025-01-01",
+                "entry_date": "2025-01-02",
+                "exit_date": "2025-01-02",
+                "entry": 100,
+                "exit": 100 * (1 + trade_return + 0.002),
+                "cost_bps_per_side": 10,
+                "return": trade_return,
+            }
+            for symbol, trade_return in (("WIN", 0.4), ("LOSS", -0.4))
+        ],
+    }), encoding="utf-8")
+
+    summary = update_paper_ledger(
+        {"created_at": "2026-01-05T22:00:00Z", "entries": []},
+        pd.DataFrame(),
+        path=path,
+    )
+
+    assert np.isclose(summary["by_plan"]["same-day"]["max_drawdown"], 0)
+
+
 def test_paper_gate_rejects_symbol_or_time_concentration(tmp_path):
     path = tmp_path / "paper.json"
     start = pd.Timestamp("2025-01-01")
@@ -1028,9 +1206,13 @@ def test_paper_gate_rejects_symbol_or_time_concentration(tmp_path):
             {
                 "symbol": "ONLY",
                 "style": "SWING_20D",
-                "signal_date": "2025-01-01",
+                "signal_date": str((start - pd.Timedelta(days=1) + pd.Timedelta(days=index * 4)).date()),
                 "plan_id": "one-symbol",
+                "entry_date": str((start + pd.Timedelta(days=index * 4)).date()),
                 "exit_date": str((start + pd.Timedelta(days=index * 4)).date()),
+                "entry": 100,
+                "exit": 101.2,
+                "cost_bps_per_side": 10,
                 "return": 0.01,
             }
             for index in range(30)
@@ -1038,9 +1220,13 @@ def test_paper_gate_rejects_symbol_or_time_concentration(tmp_path):
             {
                 "symbol": f"TEST{index % 5}",
                 "style": "SWING_20D",
-                "signal_date": "2025-01-01",
+                "signal_date": str((start - pd.Timedelta(days=1) + pd.Timedelta(days=index)).date()),
                 "plan_id": "short-burst",
+                "entry_date": str((start + pd.Timedelta(days=index)).date()),
                 "exit_date": str((start + pd.Timedelta(days=index)).date()),
+                "entry": 100,
+                "exit": 101.2,
+                "cost_bps_per_side": 10,
                 "return": 0.01,
             }
             for index in range(30)
@@ -1078,6 +1264,138 @@ def test_paper_gate_rejects_nonfinite_closed_evidence(tmp_path):
     with pytest.raises(ValueError, match="finite returns"):
         update_paper_ledger(
             {"created_at": "2026-01-05T22:00:00Z", "entries": []},
+            pd.DataFrame(),
+            path=path,
+        )
+
+
+def test_paper_gate_rejects_duplicate_closed_evidence(tmp_path):
+    path = tmp_path / "paper.json"
+    closed = [
+        {
+            "symbol": f"TEST{index}",
+            "style": "SWING_20D",
+            "plan_id": "duplicated",
+            "signal_date": str((pd.Timestamp("2025-01-01") + pd.Timedelta(days=index * 30)).date()),
+            "exit_date": str((pd.Timestamp("2025-01-02") + pd.Timedelta(days=index * 30)).date()),
+            "return": 0.01,
+        }
+        for index in range(5)
+    ]
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": closed * 6,
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate"):
+        update_paper_ledger(
+            {"created_at": "2026-01-05T22:00:00Z", "entries": []},
+            pd.DataFrame(),
+            path=path,
+        )
+
+
+def test_paper_gate_rejects_exit_before_signal(tmp_path):
+    path = tmp_path / "paper.json"
+    start = pd.Timestamp("2025-01-01")
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": [
+            {
+                "symbol": f"TEST{index % 5}",
+                "style": "SWING_20D",
+                "plan_id": "backdated",
+                "signal_date": str((start + pd.Timedelta(days=index * 4 + 1)).date()),
+                "exit_date": str((start + pd.Timedelta(days=index * 4)).date()),
+                "return": 0.01,
+            }
+            for index in range(30)
+        ],
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="chronology"):
+        update_paper_ledger(
+            {"created_at": "2026-01-05T22:00:00Z", "entries": []},
+            pd.DataFrame(),
+            path=path,
+        )
+
+
+def test_paper_gate_rejects_exit_after_run_as_of(tmp_path):
+    path = tmp_path / "paper.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": [{
+            "symbol": "TEST",
+            "style": "SWING_20D",
+            "plan_id": "future",
+            "signal_date": "2026-01-05",
+            "exit_date": "2026-01-07",
+            "return": 0.01,
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="as-of"):
+        update_paper_ledger(
+            {"created_at": "2026-01-06T22:00:00Z", "entries": []},
+            pd.DataFrame(),
+            path=path,
+        )
+
+
+def test_paper_gate_rejects_closed_evidence_without_fill_date(tmp_path):
+    path = tmp_path / "paper.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": [{
+            "symbol": "TEST",
+            "style": "SWING_20D",
+            "plan_id": "unfilled",
+            "signal_date": "2026-01-05",
+            "exit_date": "2026-01-06",
+            "return": 0.01,
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="fill"):
+        update_paper_ledger(
+            {"created_at": "2026-01-06T22:00:00Z", "entries": []},
+            pd.DataFrame(),
+            path=path,
+        )
+
+
+def test_paper_gate_rejects_return_that_does_not_match_prices(tmp_path):
+    path = tmp_path / "paper.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "positions": [],
+        "cancelled": [],
+        "closed": [{
+            "symbol": "TEST",
+            "style": "SWING_20D",
+            "plan_id": "tampered",
+            "signal_date": "2026-01-05",
+            "entry_date": "2026-01-06",
+            "exit_date": "2026-01-06",
+            "entry": 100,
+            "exit": 90,
+            "cost_bps_per_side": 10,
+            "return": 0.5,
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="reconciled"):
+        update_paper_ledger(
+            {"created_at": "2026-01-06T22:00:00Z", "entries": []},
             pd.DataFrame(),
             path=path,
         )

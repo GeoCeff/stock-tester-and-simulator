@@ -37,12 +37,6 @@
   const RESEARCH_MAX_AGE_MINUTES = 30;
   const RESEARCH_REFRESH_MS = 60 * 60 * 1000;
   const QUOTE_MAX_AGE_MS = 5000;
-  const RULE_VARIANTS = [
-    { name: "Tight 1.5R", stopAtr: 1.5, targetR: 1.5, minProb: 0.55 },
-    { name: "Balanced 2R", stopAtr: 2.0, targetR: 2.0, minProb: 0.58 },
-    { name: "Selective 2.5R", stopAtr: 2.5, targetR: 2.5, minProb: 0.62 },
-    { name: "High Conviction 3R", stopAtr: 2.2, targetR: 3.0, minProb: 0.66 }
-  ];
   const ACCOUNT = {
     equity: 100000,
     buyingPower: 100000,
@@ -213,12 +207,16 @@
     if (ageMs(agentCreatedAt) > RESEARCH_AGENT_MAX_AGE_DAYS * 86400000) return "reject";
     const candidate = researchAgentCandidate(metric.symbol, style);
     if (!candidate) return "reject";
+    const newsCreatedAt = candidate.news_created_at || candidate.newsCreatedAt || "";
+    const newsAt = Date.parse(newsCreatedAt);
     if (
       state.researchAgent.paper_evidence?.status !== "validated"
       || !state.researchAgent.paper_evidence?.validated_plans?.includes(candidate.plan_id)
       || candidate.news_action !== "pass"
       || candidate.news_status !== "ok"
-      || ageMs(candidate.news_created_at || candidate.newsCreatedAt) > RESEARCH_NEWS_MAX_AGE_MS
+      || !Number.isFinite(newsAt)
+      || newsAt < Date.parse(agentCreatedAt)
+      || ageMs(newsCreatedAt) > RESEARCH_NEWS_MAX_AGE_MS
     ) return "reject";
     return Math.abs(metric.price - candidate.entry) / candidate.entry <= 0.03 ? "pass" : "reject";
   }
@@ -1340,17 +1338,13 @@
       : "";
     banner.classList.toggle("is-hidden", !fileMode);
 
-    const best = bestReadySetup();
-    const kill = killSwitchReasons();
-    const readiness = best ? ibkrReadiness(best) : null;
-    document.getElementById("summary-best-trade").textContent = best
-      ? `${best.symbol} ${best.label} ${best.status} ${formatNumber(best.setupScore, 0)}`
-      : "No setup";
-    document.getElementById("summary-system").textContent = kill[0] || `${state.mode}${state.liveOrdersEnabled ? " / live armed" : " / safe"}`;
-    document.getElementById("summary-ibkr").textContent = `${state.ibkr.status}${state.ibkr.accountId ? ` / ${state.ibkr.accountId}` : ""}`;
-    document.getElementById("summary-next-action").textContent = readiness
-      ? readiness.reason
-      : "Add symbols or sync data";
+    const primary = state.researchAgent?.styles?.SWING_20D?.strategy || "low_vol_trend";
+    const paper = state.researchAgent?.paper_evidence || {};
+    const closed = Number(paper.current_closed_trades || 0);
+    document.getElementById("summary-primary-strategy").textContent = `${primary} / rules frozen`;
+    document.getElementById("summary-evidence").textContent = `${paper.status || "warming_up"} / ${closed} of 30 closes`;
+    document.getElementById("summary-universe").textContent = `${state.universe.length} liquid stocks / no cherry-picking`;
+    document.getElementById("summary-next-action").textContent = "Collect prospective shadow outcomes";
   }
 
   function renderDecisionPanel() {
@@ -1774,15 +1768,6 @@
     return Object.keys(STYLE_CONFIG).map((style) => ({ style, ...summarizeRows(rows.filter((row) => row.style === style)) }));
   }
 
-  function optimizerResults() {
-    const replay = replaySetups();
-    return RULE_VARIANTS.map((variant) => {
-      const picked = replay.filter((row) => row.probability >= variant.minProb && row.vol20 < 0.75);
-      const summary = summarizeRows(picked);
-      return { ...variant, ...summary };
-    }).sort((a, b) => b.expectancy - a.expectancy);
-  }
-
   function featureImportance() {
     const replay = replaySetups();
     const actual = replay.map((row) => row.actual);
@@ -1908,31 +1893,6 @@
       ["Best replay style", best ? STYLE_LABELS[best.style] : "-"],
       ["Live orders armed", state.liveOrdersEnabled ? "Yes" : "No"]
     ];
-  }
-
-  function stylePurpose(style) {
-    if (style === "DAY_TRADE") return "same-session momentum, tight bracket, no overnight thesis";
-    if (style === "OVERNIGHT_1D") return "buy today, exit tomorrow if short-term edge persists";
-    if (style === "SWING_5D") return "weekly trend/relative-strength setup";
-    return "monthly swing when trend, regime, and drawdown are aligned";
-  }
-
-  function strategyEvaluationRows() {
-    const replay = replaySummary();
-    return Object.keys(STYLE_CONFIG).map((style) => {
-      const sample = replay.find((row) => row.style === style) || {};
-      const validator = strategyValidationStatus(style);
-      const use = validator === "reject" ? "Blocked" : validator === "reduce" ? "Reduced" : "Active";
-      const config = styleConfig(style);
-      return [
-        STYLE_LABELS[style],
-        use,
-        stylePurpose(style),
-        formatPct(sample.expectancy || 0),
-        formatPct(sample.winRate || 0, 0),
-        `${config.stopAtr} ATR stop / ${config.targetR}R target / ${formatPct(config.minProb, 0)} min prob`
-      ];
-    }).sort((a, b) => parseFloat(b[3]) - parseFloat(a[3]));
   }
 
   function sectorRows() {
@@ -2371,16 +2331,19 @@
       ]);
       target.innerHTML = table(["Symbol", "Style", "Gate", "Score", "Prob", "Expected", "Fees", "Net", "Readiness"], rows);
     } else if (state.activeTab === "strategy") {
-      const bestStyle = strategyEvaluationRows()[0];
-      const bestRule = optimizerResults()[0];
+      const paper = state.researchAgent?.paper_evidence || {};
       target.innerHTML = `
         <div class="health-grid">
-          <div class="health-card"><span>Primary edge</span><strong>trend + relative strength</strong></div>
-          <div class="health-card"><span>Best replay style</span><strong>${bestStyle ? bestStyle[0] : "-"}</strong></div>
-          <div class="health-card"><span>Best rule set</span><strong>${bestRule ? bestRule.name : "-"}</strong></div>
-          <div class="health-card"><span>Risk model</span><strong>ATR bracket + account caps</strong></div>
+          <div class="health-card"><span>Primary strategy</span><strong>low_vol_trend</strong></div>
+          <div class="health-card"><span>Posture</span><strong>shadow only</strong></div>
+          <div class="health-card"><span>Paper evidence</span><strong>${Number(paper.current_closed_trades || 0)} / 30 closed</strong></div>
+          <div class="health-card"><span>Future challenger</span><strong>defensive / low beta</strong></div>
         </div>
-        ${table(["Strategy", "Bot use", "What it trades", "Replay expectancy", "Replay win", "Rules"], strategyEvaluationRows())}
+        ${table(["Priority", "Strategy", "Status", "Rules", "Next valid evidence"], [
+          ["A", "Low-volatility trend", "Rules frozen", "200D trend + 63D momentum + below-median 20D volatility", "Prospective shadow, then exact-plan paper evidence"],
+          ["B", "Defensive / low beta", "Future challenger", "Separately registered experiment only", "Materially new point-in-time data"],
+          ["Parked", "Other trend and mean-reversion variants", "Cooling down", "No nearby filters or threshold tuning", "A distinct predeclared hypothesis"]
+        ])}
       `;
     } else if (state.activeTab === "sectors") {
       target.innerHTML = table(["Sector", "Symbols", "Ready", "Best", "Avg score", "Avg expected", "Avg vol", "Avg drawdown"], sectorRows());
@@ -2442,9 +2405,22 @@
     } else if (state.activeTab === "replay") {
       const rows = replaySummary().map((row) => [STYLE_LABELS[row.style], row.count, formatPct(row.winRate, 0), formatPct(row.expectancy), formatNumber(row.profitFactor)]);
       target.innerHTML = table(["Style", "Replay samples", "Win", "Expectancy", "Profit factor"], rows);
-    } else if (state.activeTab === "optimizer") {
-      const rows = optimizerResults().map((row) => [row.name, row.count, formatPct(row.winRate, 0), formatPct(row.expectancy), formatNumber(row.profitFactor), `${row.stopAtr} ATR / ${row.targetR}R / ${formatPct(row.minProb, 0)}`]);
-      target.innerHTML = table(["Variant", "Trades", "Win", "Expectancy", "Profit factor", "Rules"], rows);
+    } else if (state.activeTab === "protocol") {
+      target.innerHTML = `
+        <div class="health-grid">
+          <div class="health-card"><span>Universe</span><strong>${state.universe.length} objective liquid stocks</strong></div>
+          <div class="health-card"><span>Minimum evidence</span><strong>30 closes / 5 symbols / 90 days</strong></div>
+          <div class="health-card"><span>Acceptance</span><strong>60% positive symbols / PF 1.20+</strong></div>
+          <div class="health-card"><span>Risk ceiling</span><strong>15% max drawdown</strong></div>
+        </div>
+        ${table(["Rule", "Policy"], [
+          ["Strategy changes", "Changing an evidence-producing rule starts a new evidence lane"],
+          ["Stock selection", "Exclude only for predeclared liquidity, spread, data, corporate-action, or broker constraints"],
+          ["News", "Execution veto or size reduction only; never creates a trade signal"],
+          ["Live use", "Blocked until the exact unchanged plan passes prospective paper validation"],
+          ["Scaling", "Manual confirmation first; increase capital only after reconciled live evidence"]
+        ])}
+      `;
     } else if (state.activeTab === "attribution") {
       target.innerHTML = attributionRows().length
         ? table(["Symbol", "Style", "P/L", "Exit", "Attribution"], attributionRows())

@@ -74,7 +74,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v11"
+EXECUTION_PLAN_VERSION = "daily-bars-v12"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -96,7 +96,7 @@ def _indicators(close, market_breadth=None, benchmark_close=None):
     if market_breadth is not None:
         values["market_breadth"] = market_breadth.reindex(close.index)
     if benchmark_close is not None:
-        values["benchmark_close"] = benchmark_close.reindex(close.index).ffill()
+        values["benchmark_close"] = benchmark_close.reindex(close.index)
     return values
 
 
@@ -617,6 +617,7 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
             "exit": exit_price,
             "exit_date": exit_date,
             "exit_reason": exit_reason,
+            "cost_bps_per_side": cost_bps_per_side,
             "return": gross_return - 2 * cost_bps_per_side / 10_000,
         })
 
@@ -667,23 +668,54 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
             }, cost_bps_per_side))
 
     by_plan = {}
+    as_of = pd.to_datetime(result.get("created_at"), errors="coerce", utc=True)
     plan_ids = {row.get("plan_id", "legacy-unversioned") for row in ledger["closed"]}
     for plan_id in sorted(plan_ids | current_plan_ids):
         rows = [row for row in ledger["closed"] if row.get("plan_id", "legacy-unversioned") == plan_id]
-        exit_dates = pd.to_datetime([row.get("exit_date") for row in rows], errors="coerce")
-        chronology_valid = bool(len(exit_dates) and exit_dates.notna().all())
+        trade_ids = [(row.get("symbol"), row.get("style"), row.get("signal_date")) for row in rows]
+        if any(not all(isinstance(value, str) and value for value in trade_id) for trade_id in trade_ids) or len(set(trade_ids)) != len(trade_ids):
+            raise ValueError("paper ledger closed evidence contains a duplicate or missing trade identity")
+        signal_dates = pd.to_datetime([row.get("signal_date") for row in rows], errors="coerce", utc=True)
+        entry_dates = pd.to_datetime([row.get("entry_date") for row in rows], errors="coerce", utc=True)
+        exit_dates = pd.to_datetime([row.get("exit_date") for row in rows], errors="coerce", utc=True)
+        chronology_valid = bool(
+            len(exit_dates)
+            and not pd.isna(as_of)
+            and signal_dates.notna().all()
+            and entry_dates.notna().all()
+            and exit_dates.notna().all()
+            and (entry_dates > signal_dates).all()
+            and (exit_dates >= entry_dates).all()
+            and (exit_dates <= as_of).all()
+        )
         if chronology_valid:
             rows = [rows[index] for index in np.argsort(exit_dates)]
             exit_dates = exit_dates.sort_values()
+        entries = pd.to_numeric(pd.Series([row.get("entry") for row in rows]), errors="coerce").to_numpy(dtype=float)
+        exits = pd.to_numeric(pd.Series([row.get("exit") for row in rows]), errors="coerce").to_numpy(dtype=float)
+        costs = pd.to_numeric(pd.Series([row.get("cost_bps_per_side") for row in rows]), errors="coerce").to_numpy(dtype=float)
         returns = pd.to_numeric(pd.Series([row.get("return") for row in rows]), errors="coerce").to_numpy(dtype=float)
-        if rows and (not chronology_valid or not np.isfinite(returns).all()):
-            raise ValueError("paper ledger closed evidence requires valid exit dates and finite returns")
-        wins = returns[returns > 0]
-        losses = returns[returns < 0]
-        equity = pd.Series(np.r_[1.0, (1 + returns).cumprod()])
-        max_drawdown = float((equity / equity.cummax() - 1).min()) if not equity.empty else 0.0
-        profit_factor = float(wins.sum() / abs(losses.sum())) if losses.size else (999.0 if wins.size else 0.0)
-        expectancy = float(returns.mean()) if returns.size else 0.0
+        prices_valid = bool(
+            np.isfinite(entries).all()
+            and np.isfinite(exits).all()
+            and np.isfinite(costs).all()
+            and np.isfinite(returns).all()
+            and (entries > 0).all()
+            and (exits > 0).all()
+            and (costs >= 0).all()
+            and np.allclose(returns, exits / entries - 1 - 2 * costs / 10_000, rtol=0, atol=1e-12)
+        )
+        if rows and (not chronology_valid or not prices_valid):
+            raise ValueError("paper ledger closed evidence requires valid signal/fill/exit/as-of chronology and finite returns reconciled to positive prices and recorded costs")
+        realized_returns = (
+            pd.DataFrame({"date": exit_dates.to_numpy(), "return": returns})
+            .groupby("date")["return"].mean().sort_index()
+            if rows else pd.Series(dtype=float)
+        )
+        metrics = _metrics(realized_returns, returns)
+        max_drawdown = metrics["max_drawdown"]
+        profit_factor = metrics["profit_factor"]
+        expectancy = metrics["expectancy"]
         symbols = {}
         for row in rows:
             if row.get("symbol"):
@@ -747,9 +779,16 @@ def run_research_loop(
         raise ValueError("universe required")
     if folds < 4:
         raise ValueError("at least four folds required to preserve a final holdout")
-    data = _align_universe_data(data, universe)
-    gates = {**DEFAULT_GATES, **(gates or {})}
     candidates = candidates or DEFAULT_CANDIDATES
+    alignment_universe = [*universe]
+    if (
+        any(candidate["strategy"] == "benchmark_confirmed_trend" for candidate in candidates)
+        and BENCHMARK_SYMBOL not in alignment_universe
+        and not _benchmark_close(data).empty
+    ):
+        alignment_universe.append(BENCHMARK_SYMBOL)
+    data = _align_universe_data(data, alignment_universe)
+    gates = {**DEFAULT_GATES, **(gates or {})}
     excluded_holdout_trials = set(excluded_holdout_trials or ())
     usable_length = _common_length(data, universe)
     final_start = _folds(usable_length, folds, warmup)[-1][0]
@@ -864,7 +903,7 @@ def run_research_loop(
             winner["reason"] = "no candidate passed development execution validation"
             selected[style] = winner
             continue
-        executable.sort(key=lambda row: row["execution_score"], reverse=True)
+        executable.sort(key=lambda row: (row["execution_score"], row["strategy"] == "low_vol_trend"), reverse=True)
         eligible = [
             row
             for row in executable
@@ -1055,7 +1094,31 @@ def append_research_history(result, *, path=None, max_records=200):
         ]
         if existing and json.loads(existing[-1]).get("created_at") == result["created_at"]:
             return record
-    lines = [*existing, json.dumps(record, sort_keys=True)][-max_records:]
+    cutoff = datetime.fromisoformat(result["created_at"].replace("Z", "+00:00")) - timedelta(days=HOLDOUT_COOLDOWN_DAYS)
+
+    def active_rejected_families(line):
+        stored = json.loads(line)
+        if datetime.fromisoformat(stored["created_at"].replace("Z", "+00:00")) < cutoff:
+            return set()
+        families = set()
+        for row in stored.get("styles", {}).values():
+            if row.get("holdout_exposed") and row.get("status") == "reject":
+                strategy = row.get("strategy", "")
+                family = row.get("family") or STRATEGY_FAMILIES.get(strategy, strategy)
+                if family:
+                    families.add(family)
+        return families
+
+    all_lines = [*existing, json.dumps(record, sort_keys=True)]
+    lines = all_lines[-max_records:]
+    retained_families = set().union(*(active_rejected_families(line) for line in lines))
+    protected = []
+    for line in reversed(all_lines[:-max_records]):
+        missing = active_rejected_families(line) - retained_families
+        if missing:
+            protected.append(line)
+            retained_families.update(missing)
+    lines = [*reversed(protected), *lines]
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(f"{path.suffix}.tmp")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")

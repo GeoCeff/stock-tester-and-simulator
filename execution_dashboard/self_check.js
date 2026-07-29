@@ -103,6 +103,7 @@ assert.equal(validateResearchOrder(researchOrder, validatedAgent, 100000, Date.p
 assert.equal(validateResearchOrder({ ...researchOrder, planId: "" }, validatedAgent, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, signal_date: "2026-07-01" }] }, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, news_created_at: "2026-07-24T00:00:00Z" }] }, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, created_at: "2026-07-25T12:00:00Z", entries: [{ ...validatedCandidate, news_created_at: "2026-07-25T11:59:00Z" }] }, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, quantity: 51 })) }, validatedAgent, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, tif: "IOC" })) }, validatedAgent, 100000, validationNow).ok, false);
@@ -162,6 +163,8 @@ const dashboardJs = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
 const launcher = fs.readFileSync(path.join(__dirname, "..", "start_all.ps1"), "utf8");
 assert(dashboardHtml.includes("<title>Stock Lab — Research & Execution</title>"), "unified dashboard title should be present");
 assert(dashboardHtml.includes('id="workspace"') && dashboardHtml.includes('id="analysis-hub"'), "primary navigation targets should exist");
+assert(dashboardHtml.includes('id="summary-primary-strategy"') && dashboardHtml.includes('data-tab="protocol"'), "research focus and fixed protocol should be visible");
+assert(!dashboardHtml.includes('data-tab="optimizer"') && !dashboardJs.includes("optimizerResults"), "dashboard should not encourage nearby-rule optimization");
 assert(dashboardJs.includes('location.protocol === "file:"') && dashboardJs.includes("location.replace(API_BASE)"), "direct file launches should recover into the local server");
 assert(!launcher.includes("8501"), "the unified launcher must not start the retired Streamlit UI");
 assert.equal((launcher.match(/Start-Process "http:/g) || []).length, 1, "the unified launcher should open one browser application");
