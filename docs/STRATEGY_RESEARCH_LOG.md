@@ -1,5 +1,16 @@
 # Strategy Research Log
 
+## 2026-07-29 — Server-side qualification reconciliation
+
+- Safety audit found that the browser checked the model pack, but the live-order server validated only the research-agent artifact. A stale, disabled, mismatched, or altered model pack was therefore not independently enforced at the final submission boundary.
+- The server also trusted the paper summary’s top-level `validated` label and plan ID without rechecking the per-plan counts, duration, symbol breadth, positive-symbol ratio, expectancy, profit factor, and drawdown values.
+- Live validation now requires matching agent/model timestamps, identical fixed 20-stock universes and strategy configuration, enabled/pass status in both artifacts, recognized non-demo data with a SHA-256 fingerprint, an exposed chronological final holdout, and all predeclared paper thresholds in the exact plan’s own summary.
+- Missing, non-finite, fractional count, contradictory, stale, demo, disabled, mismatched, or below-threshold evidence fails closed before any broker order request.
+- Current saved model and research artifacts still pass their structural validators. The active strategy remains rejected/protected and has zero qualifying paper closes, so it remains unable to reach live submission.
+- No strategy rule, dataset, research run, paper position, holdout, broker request, order, or GitHub push changed during this audit.
+
+Decision: browser readiness is advisory; the live-order server must independently reconcile every research artifact and qualification threshold at submission time.
+
 ## 2026-07-29 — Evidence display reconciliation
 
 - Audit found that cooldown-protected candidates retained exact-plan development metrics only in `development_diagnostics`; the main style record published an empty execution-plan object. The research log was accurate, but the primary artifact was incomplete.

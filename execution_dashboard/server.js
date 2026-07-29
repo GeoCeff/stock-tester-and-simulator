@@ -19,8 +19,12 @@ const MODEL_PACK_FILE = path.join(DATA_DIR, "bot_model_pack.json");
 const RESEARCH_AGENT_FILE = path.join(DATA_DIR, "research_agent.json");
 const RESEARCH_FILE = path.join(DATA_DIR, "market_research_snapshot.json");
 const RESEARCH_AGENT_MAX_AGE_MS = 86400000;
+const MODEL_PACK_MAX_AGE_MS = 30 * 86400000;
 const RESEARCH_SIGNAL_MAX_AGE_MS = 5 * 86400000;
 const RESEARCH_NEWS_MAX_AGE_MS = 86400000;
+const PAPER_MIN_CLOSED_TRADES = 30;
+const PAPER_MIN_SYMBOLS = 5;
+const PAPER_MIN_SPAN_DAYS = 90;
 const MAX_DAILY_LOSS_PCT = 0.02;
 const MAX_SPREAD_BPS = 20;
 const MAX_RESEARCH_RISK_PCT = 0.01;
@@ -67,6 +71,7 @@ const LIMIT_ORDER_TYPES = new Set(["LMT", "STP LMT", "STOP_LIMIT"]);
 const STOP_ORDER_TYPES = new Set(["STP", "STOP", "STP LMT", "STOP_LIMIT"]);
 const TIFS = new Set(["DAY", "GTC", "IOC"]);
 const MODEL_PACK_STYLES = new Set(["DAY_TRADE", "OVERNIGHT_1D", "SWING_5D", "SWING_20D"]);
+const RESEARCH_DATA_SOURCES = new Set(["Yahoo Finance", "Stooq"]);
 
 function send(res, status, body, type = "application/json; charset=utf-8") {
   res.writeHead(status, {
@@ -492,6 +497,12 @@ function validateModelPack(pack) {
   if (!String(pack.model_version || pack.modelVersion || "").trim()) return { ok: false, error: "model_version required" };
   const createdAt = Date.parse(pack.created_at || pack.createdAt || "");
   if (!Number.isFinite(createdAt) || createdAt > Date.now() + 300000) return { ok: false, error: "valid created_at required" };
+  if (
+    !Array.isArray(pack.universe)
+    || pack.universe.length !== 20
+    || new Set(pack.universe).size !== 20
+    || pack.universe.some((symbol) => typeof symbol !== "string" || !/^[A-Z0-9.-]{1,12}$/.test(symbol))
+  ) return { ok: false, error: "model pack requires 20 unique valid universe symbols" };
   if (!pack.styles || typeof pack.styles !== "object" || Array.isArray(pack.styles)) return { ok: false, error: "styles object required" };
 
   const unknownStyles = Object.keys(pack.styles).filter((style) => !MODEL_PACK_STYLES.has(style));
@@ -510,6 +521,8 @@ function validateModelPack(pack) {
     if (typeof row.enabled !== "boolean") return { ok: false, error: `${style}.enabled must be boolean` };
     const status = String(row.acceptance?.status || "").toLowerCase();
     if (!["pass", "reject"].includes(status)) return { ok: false, error: `${style}.acceptance.status must be pass or reject` };
+    if (row.enabled !== (status === "pass")) return { ok: false, error: `${style}.enabled must match acceptance.status` };
+    if (row.enabled && !String(row.strategy || "").trim()) return { ok: false, error: `${style}.strategy required when enabled` };
     for (const [camel, snake, min, max] of fields) {
       const value = Number(row[camel] ?? row[snake]);
       if (!Number.isFinite(value) || value < min || value > max) return { ok: false, error: `${style}.${snake} out of range` };
@@ -561,11 +574,29 @@ function validateResearchAgent(result) {
   return { ok: true };
 }
 
-function validateResearchOrder(body, agent, accountEquity, now = Date.now()) {
+function validateResearchOrder(body, agent, modelPack, accountEquity, now = Date.now()) {
   const validation = validateResearchAgent(agent);
   if (!validation.ok) return validation;
   const createdAt = Date.parse(agent.created_at || agent.createdAt || "");
   if (now - createdAt > RESEARCH_AGENT_MAX_AGE_MS) return { ok: false, error: "research agent result is stale" };
+  const packValidation = validateModelPack(modelPack);
+  if (!packValidation.ok) return { ok: false, error: `model pack rejected: ${packValidation.error}` };
+  const packCreatedAt = Date.parse(modelPack.created_at || modelPack.createdAt || "");
+  if (now - packCreatedAt > MODEL_PACK_MAX_AGE_MS) return { ok: false, error: "model pack is stale" };
+  if (packCreatedAt !== createdAt) return { ok: false, error: "model pack does not match the research snapshot" };
+  const agentUniverse = agent.universe;
+  if (
+    !Array.isArray(agentUniverse)
+    || agentUniverse.length !== 20
+    || new Set(agentUniverse).size !== 20
+    || agentUniverse.some((symbol) => typeof symbol !== "string" || !modelPack.universe.includes(symbol))
+  ) return { ok: false, error: "research and model-pack universes do not match the fixed 20-stock policy" };
+  const provenance = agent.data_provenance;
+  if (
+    provenance?.is_demo !== false
+    || !RESEARCH_DATA_SOURCES.has(provenance?.source)
+    || !/^[a-f0-9]{64}$/.test(String(provenance?.dataset_sha256 || ""))
+  ) return { ok: false, error: "recognized fingerprinted real-data provenance required" };
   const symbol = String(body.symbol || "").toUpperCase();
   const style = String(body.style || "");
   const planId = String(body.planId || body.plan_id || "");
@@ -574,13 +605,71 @@ function validateResearchOrder(body, agent, accountEquity, now = Date.now()) {
     entry.symbol === symbol && entry.style === style && entry.plan_id === planId
   );
   if (!candidate) return { ok: false, error: "live order does not match a current research candidate" };
+  const agentStyle = agent.styles?.[style];
+  const packStyle = modelPack.styles?.[style];
+  const holdout = agent.holdout;
+  const holdoutStart = Date.parse(holdout?.start || "");
+  const holdoutEnd = Date.parse(holdout?.end || "");
+  if (
+    !agentStyle?.enabled
+    || String(agentStyle.acceptance?.status || "").toLowerCase() !== "pass"
+    || agentStyle.strategy !== candidate.strategy
+    || agentStyle.metrics?.holdout_exposed !== true
+    || !/^[a-f0-9]{16}$/.test(String(holdout?.id || ""))
+    || !Number.isFinite(holdoutStart)
+    || !Number.isFinite(holdoutEnd)
+    || holdoutStart > holdoutEnd
+    || holdoutEnd > createdAt
+    || !Number.isInteger(Number(holdout?.rows))
+    || Number(holdout.rows) < 1
+    || !packStyle?.enabled
+    || String(packStyle.acceptance?.status || "").toLowerCase() !== "pass"
+    || packStyle.strategy !== candidate.strategy
+    || !modelPack.universe.includes(symbol)
+  ) return { ok: false, error: "candidate is not enabled by matching accepted research artifacts" };
+  const matchingConfig = ["holding_period", "min_probability", "stop_atr", "target_r", "risk_pct"].every(
+    (field) => Number(packStyle[field]) === Number(agentStyle[field])
+  );
+  const exactPlanMatches = (
+    matchingConfig
+    && Number(candidate.portfolio_slots) === 20
+    && Number(packStyle.holding_period) === Number(candidate.max_hold)
+    && Number(packStyle.stop_atr) === Number(candidate.stop_atr)
+    && Number(packStyle.target_r) === Number(candidate.target_r)
+    && Number(packStyle.risk_pct) === Number(candidate.risk_pct ?? candidate.riskPct)
+  );
+  if (!exactPlanMatches) return { ok: false, error: "model pack differs from the exact research plan" };
   const signalAt = Date.parse(candidate.signal_date || candidate.signalDate || "");
   if (signalAt > now + 300000 || now - signalAt > RESEARCH_SIGNAL_MAX_AGE_MS) {
     return { ok: false, error: "research candidate signal is stale" };
   }
+  const paperPlan = agent.paper_evidence?.by_plan?.[planId];
+  const paperValues = [
+    paperPlan?.closed_trades,
+    paperPlan?.symbols,
+    paperPlan?.evidence_span_days,
+    paperPlan?.portfolio_slots,
+    paperPlan?.positive_symbol_ratio,
+    paperPlan?.expectancy,
+    paperPlan?.profit_factor,
+    paperPlan?.max_drawdown
+  ].map(Number);
   if (
     agent.paper_evidence?.status !== "validated"
     || !agent.paper_evidence?.validated_plans?.includes(planId)
+    || paperPlan?.status !== "validated"
+    || !paperValues.every(Number.isFinite)
+    || !paperValues.slice(0, 4).every(Number.isInteger)
+    || Number(paperPlan.closed_trades) < PAPER_MIN_CLOSED_TRADES
+    || Number(paperPlan.symbols) < PAPER_MIN_SYMBOLS
+    || Number(paperPlan.evidence_span_days) < PAPER_MIN_SPAN_DAYS
+    || Number(paperPlan.portfolio_slots) !== 20
+    || Number(paperPlan.positive_symbol_ratio) < 0.6
+    || Number(paperPlan.positive_symbol_ratio) > 1
+    || Number(paperPlan.expectancy) <= 0
+    || Number(paperPlan.profit_factor) < 1.2
+    || Number(paperPlan.max_drawdown) < -0.15
+    || Number(paperPlan.max_drawdown) > 0
   ) {
     return { ok: false, error: "exact research plan has not passed forward paper validation" };
   }
@@ -999,6 +1088,7 @@ async function handleApi(req, res, url) {
       const researchValidation = validateResearchOrder(
         body,
         readJsonFile(RESEARCH_AGENT_FILE, null),
+        readJsonFile(MODEL_PACK_FILE, null),
         ibkrNetLiquidation(accountSummary)
       );
       if (!researchValidation.ok) {

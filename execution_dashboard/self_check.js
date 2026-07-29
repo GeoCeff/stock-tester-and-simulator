@@ -63,12 +63,20 @@ const modelPack = {
   schema_version: 1,
   created_at: "2026-06-21T00:00:00Z",
   model_version: "self-check",
+  universe: app.DEFAULT_UNIVERSE,
   styles: Object.fromEntries(["DAY_TRADE", "OVERNIGHT_1D", "SWING_5D", "SWING_20D"].map((style) => [style, { ...modelStyle }]))
 };
 assert.equal(validateModelPack(modelPack).ok, true);
+assert.equal(validateModelPack({ ...modelPack, universe: modelPack.universe.slice(1) }).ok, false);
 assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SWING_5D: { ...modelStyle, enabled: true, stop_atr: 2, target_r: 2, risk_pct: 0.02 } } }).ok, false);
 assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SWING_5D: { ...modelStyle, enabled: true, risk_pct: 2 } } }).ok, false);
-const researchAgent = { schema_version: 1, created_at: "2026-07-25T00:00:00Z", entries: [{ symbol: "AAPL", side: "LONG", style: "SWING_5D", signal_date: "2026-07-25", entry: 200, stop: 190, target: 220, risk_pct: 0.005 }] };
+const researchAgent = {
+  schema_version: 1,
+  created_at: "2026-07-25T00:00:00Z",
+  universe: app.DEFAULT_UNIVERSE,
+  data_provenance: { source: "Yahoo Finance", is_demo: false, dataset_sha256: "a".repeat(64) },
+  entries: [{ symbol: "AAPL", side: "LONG", style: "SWING_5D", signal_date: "2026-07-25", entry: 200, stop: 190, target: 220, risk_pct: 0.005 }]
+};
 assert.equal(validateResearchAgent(researchAgent).ok, true);
 assert.equal(validateResearchAgent({ ...researchAgent, entries: [{ ...researchAgent.entries[0], risk_pct: 0.02 }] }).ok, false);
 assert.equal(validateResearchAgent({ ...researchAgent, entries: [{ ...researchAgent.entries[0], stop: 210 }] }).ok, false);
@@ -89,6 +97,11 @@ assert.equal(app.researchEvidence({
 const validatedCandidate = {
   ...researchAgent.entries[0],
   plan_id: "exact-plan",
+  strategy: "low_vol_trend",
+  max_hold: 5,
+  stop_atr: 2,
+  target_r: 2,
+  portfolio_slots: 20,
   news_action: "pass",
   news_status: "ok",
   news_created_at: "2026-07-25T23:50:00Z"
@@ -96,7 +109,53 @@ const validatedCandidate = {
 const validatedAgent = {
   ...researchAgent,
   entries: [validatedCandidate],
-  paper_evidence: { status: "validated", validated_plans: ["exact-plan"] }
+  styles: {
+    SWING_5D: {
+      enabled: true,
+      strategy: "low_vol_trend",
+      holding_period: 5,
+      min_probability: 0.56,
+      stop_atr: 2,
+      target_r: 2,
+      risk_pct: 0.005,
+      metrics: { holdout_exposed: true },
+      acceptance: { status: "pass" }
+    }
+  },
+  holdout: { id: "0123456789abcdef", start: "2025-01-01", end: "2026-07-24", rows: 300 },
+  paper_evidence: {
+    status: "validated",
+    validated_plans: ["exact-plan"],
+    by_plan: {
+      "exact-plan": {
+        status: "validated",
+        closed_trades: 30,
+        symbols: 5,
+        evidence_span_days: 90,
+        portfolio_slots: 20,
+        positive_symbol_ratio: 0.6,
+        expectancy: 0.001,
+        profit_factor: 1.2,
+        max_drawdown: -0.15
+      }
+    }
+  }
+};
+const approvedStyle = {
+  ...modelStyle,
+  enabled: true,
+  strategy: "low_vol_trend",
+  holding_period: 5,
+  min_probability: 0.56,
+  stop_atr: 2,
+  target_r: 2,
+  risk_pct: 0.005,
+  acceptance: { status: "pass" }
+};
+const approvedModelPack = {
+  ...modelPack,
+  created_at: validatedAgent.created_at,
+  styles: { ...modelPack.styles, SWING_5D: approvedStyle }
 };
 const researchOrder = {
   symbol: "AAPL",
@@ -109,19 +168,39 @@ const researchOrder = {
   ]
 };
 const validationNow = Date.parse("2026-07-26T00:00:00Z");
-assert.equal(validateResearchOrder(researchOrder, validatedAgent, 100000, validationNow).ok, true);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, paper_evidence: { status: "warming_up", validated_plans: [] } }, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder({ ...researchOrder, planId: "other-plan" }, validatedAgent, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [], shadow_entries: [validatedCandidate] }, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder(researchOrder, validatedAgent, 100000, Date.parse("2026-08-01T00:00:00Z")).ok, false);
-assert.equal(validateResearchOrder({ ...researchOrder, planId: "" }, validatedAgent, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, signal_date: "2026-07-01" }] }, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, news_created_at: "2026-07-24T00:00:00Z" }] }, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, created_at: "2026-07-25T12:00:00Z", entries: [{ ...validatedCandidate, news_created_at: "2026-07-25T11:59:00Z" }] }, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, quantity: 51 })) }, validatedAgent, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, tif: "IOC" })) }, validatedAgent, 100000, validationNow).ok, false);
-assert.equal(validateResearchOrder(researchOrder, validatedAgent, NaN, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, validatedAgent, approvedModelPack, 100000, validationNow).ok, true);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, paper_evidence: { status: "warming_up", validated_plans: [], by_plan: {} } }, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, planId: "other-plan" }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [], shadow_entries: [validatedCandidate] }, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, validatedAgent, approvedModelPack, 100000, Date.parse("2026-08-01T00:00:00Z")).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, planId: "" }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, signal_date: "2026-07-01" }] }, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, entries: [{ ...validatedCandidate, news_created_at: "2026-07-24T00:00:00Z" }] }, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(
+  researchOrder,
+  { ...validatedAgent, created_at: "2026-07-25T12:00:00Z", entries: [{ ...validatedCandidate, news_created_at: "2026-07-25T11:59:00Z" }] },
+  { ...approvedModelPack, created_at: "2026-07-25T12:00:00Z" },
+  100000,
+  validationNow
+).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, quantity: 51 })) }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, tif: "IOC" })) }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, validatedAgent, approvedModelPack, NaN, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, validatedAgent, { ...approvedModelPack, created_at: "2026-07-24T00:00:00Z" }, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, data_provenance: { ...validatedAgent.data_provenance, is_demo: true } }, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, validatedAgent, {
+  ...approvedModelPack,
+  styles: { ...approvedModelPack.styles, SWING_5D: { ...approvedStyle, risk_pct: 0.004 } }
+}, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, { ...validatedAgent, styles: { SWING_5D: { ...validatedAgent.styles.SWING_5D, enabled: false } } }, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder(researchOrder, {
+  ...validatedAgent,
+  paper_evidence: {
+    ...validatedAgent.paper_evidence,
+    by_plan: { "exact-plan": { ...validatedAgent.paper_evidence.by_plan["exact-plan"], profit_factor: 1.19 } }
+  }
+}, approvedModelPack, 100000, validationNow).ok, false);
 assert.equal(ibkrNetLiquidation({ ok: true, data: { netliquidation: { amount: 123456.78 } } }), 123456.78);
 assert.equal(Number.isNaN(ibkrNetLiquidation({ ok: false, data: { netliquidation: { amount: 123456.78 } } })), true);
 const aaplContract = { ok: true, data: [{ conid: 265598, symbol: "AAPL", secType: "STK" }] };
