@@ -1,5 +1,15 @@
 # Strategy Research Log
 
+## 2026-07-29 — Evidence display reconciliation
+
+- Audit found that cooldown-protected candidates retained exact-plan development metrics only in `development_diagnostics`; the main style record published an empty execution-plan object. The research log was accurate, but the primary artifact was incomplete.
+- Fixed the publisher to carry the already-computed selection execution plan into the style record without evaluating again or exposing the final holdout.
+- Added a unified Evidence view that shows signal and execution status, final-holdout exposure, paper progress, exact-plan development metrics, recognized data source, real/demo status, common coverage, dataset fingerprint, holdout identity, and the next valid action.
+- Corrected the no-trade panel and command strip so a fully populated universe no longer tells the user to enter tickers; it now explains that shadow outcomes and materially new data are required.
+- No strategy rule, universe, gate, dataset, runtime artifact, paper position, holdout, broker request, order, or GitHub push changed during this reconciliation.
+
+Decision: product surfaces must distinguish development evidence, protected holdout state, and prospective paper evidence rather than collapsing them into a generic “not ready” message.
+
 ## 2026-07-29 — Focused real-data monitoring and portfolio drawdown correction
 
 - Goal mismatch corrected before the run: routine research still evaluated the broad strategy/style matrix. The production default now evaluates only frozen `SWING_20D / low_vol_trend`; the larger common-strategy set remains a dormant watchlist.
@@ -10,7 +20,7 @@
 - Successful preflight: Yahoo Finance, all 20 fixed stocks plus SPY, 2,009 completed daily rows each from 2018-07-30 through 2026-07-28, no missing ticker, no demo fallback.
 - Cost-integrity mistake corrected: an older open paper position could close using a later run's CLI cost. Positions now persist and reuse their originating cost; legacy plan IDs recover their embedded cost or fail closed.
 - The first focused `daily-bars-v12` monitoring result showed −63.21% development drawdown and −43.65% internal-validation drawdown despite 1.52%/1.02% expectancy and 1.46/1.47 profit factors. Root cause: every exit-date cohort was incorrectly treated as 100% of portfolio capital.
-- `daily-bars-v13` now sums trade contributions across the fixed 20 universe slots, leaving inactive slots in cash. Corrected exact-plan development: 585 trades, 1.5235% expectancy, 1.463 profit factor, 80% positive symbols, and −4.75% drawdown. Internal validation: 210 trades, 1.0594% expectancy, 1.494 profit factor, 70% positive symbols, and −3.95% drawdown.
+- `daily-bars-v13` now sums trade contributions across the fixed 20 universe slots, leaving inactive slots in cash. Corrected exact-plan development: 584 trades, 1.5235% expectancy, 1.463 profit factor, 80% positive symbols, and −4.75% drawdown. Internal validation: 211 trades, 1.0594% expectancy, 1.494 profit factor, 70% positive symbols, and −3.95% drawdown.
 - Both signal and exact bracket plan passed development validation. Final holdout remained unexposed because the trend family is cooling down and routine monitoring cannot spend a holdout.
 - The current v13 snapshot produced JPM and UNH shadow candidates dated 2026-07-27. They were not added to the ledger because older v2 JPM/UNH shadow positions filled on 2026-07-27 and remain open; the one-position-per-symbol/style rule correctly prevented overlap. Old v2 outcomes remain diagnostic-only and cannot validate v13.
 - Actionable entries, current-plan closed trades, validated plans, broker requests, and orders remain zero. News had no actionable candidate to approve.

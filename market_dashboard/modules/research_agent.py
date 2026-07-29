@@ -1011,7 +1011,10 @@ def run_research_loop(
                 ),
                 "final_holdout": winner["final"] if exposed_to_final else {},
                 "holdout_exposed": exposed_to_final,
-                "execution_plan": winner.get("execution_plan", {}),
+                "execution_plan": winner.get(
+                    "execution_plan",
+                    winner.get("selection_execution_plan", {}),
+                ),
             } if winner else {},
             "acceptance": {"status": "pass" if accepted else "reject", "reason": winner["reason"] if winner else "not evaluated"},
         }

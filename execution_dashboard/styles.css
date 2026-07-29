@@ -1805,7 +1805,13 @@ button:active:not(:disabled) {
 
 .blotter-content {
   height: calc(100% - 139px);
+  overflow-x: hidden;
   background: rgba(8, 13, 22, .58);
+}
+
+.analysis-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .health-card {

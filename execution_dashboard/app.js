@@ -229,6 +229,54 @@
     return state.researchSnapshot?.symbols?.[String(symbol || "").toUpperCase()] || null;
   }
 
+  function researchEvidence(agent) {
+    const primary = agent?.styles?.SWING_20D || {};
+    const diagnostic = agent?.development_diagnostics?.find((row) => (
+      row.style === "SWING_20D" && row.strategy === primary.strategy
+    )) || {};
+    const publishedPlan = primary.metrics?.execution_plan || {};
+    const rawPlan = Object.keys(publishedPlan).length ? publishedPlan : diagnostic.execution_plan || {};
+    const plan = {
+      ...rawPlan,
+      development_validation: rawPlan.development_validation || rawPlan.final || {}
+    };
+    const paper = agent?.paper_evidence || {};
+    const provenance = agent?.data_provenance || {};
+    const coverage = Object.values(provenance.coverage || {});
+    const holdoutExposed = primary.metrics?.holdout_exposed === true;
+    const signalStatus = diagnostic.signal_status || "not evaluated";
+    const executionStatus = diagnostic.execution_status || (Object.keys(plan).length ? "pass" : "not evaluated");
+    let nextAction = "Run a real-data preflight before research.";
+    if (agent && executionStatus !== "pass") {
+      nextAction = "Keep the rules frozen; review the failed development gate.";
+    } else if (agent && !holdoutExposed) {
+      nextAction = "Collect shadow outcomes and wait for materially new data before a predeclared final holdout.";
+    } else if (primary.acceptance?.status !== "pass") {
+      nextAction = "Record the holdout failure and keep the strategy frozen.";
+    } else if (paper.status !== "validated") {
+      nextAction = `Collect exact-plan paper evidence: ${Number(paper.current_closed_trades || 0)} of 30 closes.`;
+    } else {
+      nextAction = "Review fresh news-gated candidates with manual confirmation.";
+    }
+    return {
+      strategy: primary.strategy || "low_vol_trend",
+      signalStatus,
+      executionStatus,
+      holdoutStatus: holdoutExposed ? primary.acceptance?.status || "exposed" : "protected / not exposed",
+      paperStatus: paper.status || "warming_up",
+      paperClosed: Number(paper.current_closed_trades || 0),
+      source: provenance.source || "unavailable",
+      isDemo: provenance.is_demo === true,
+      datasetHash: provenance.dataset_sha256 || "",
+      coverageLabel: coverage.length === 21 ? "20 stocks + SPY" : `${coverage.length} symbols`,
+      coverageStart: coverage.map((row) => row.first).filter(Boolean).sort().at(-1) || "-",
+      coverageEnd: coverage.map((row) => row.last).filter(Boolean).sort().at(0) || "-",
+      holdout: agent?.holdout || {},
+      plan,
+      nextAction
+    };
+  }
+
   function researchGateStatus(metric) {
     const row = researchForSymbol(metric.symbol);
     if (!row || researchAgeMinutes() > RESEARCH_MAX_AGE_MINUTES) return "reduce";
@@ -1338,13 +1386,11 @@
       : "";
     banner.classList.toggle("is-hidden", !fileMode);
 
-    const primary = state.researchAgent?.styles?.SWING_20D?.strategy || "low_vol_trend";
-    const paper = state.researchAgent?.paper_evidence || {};
-    const closed = Number(paper.current_closed_trades || 0);
-    document.getElementById("summary-primary-strategy").textContent = `${primary} / rules frozen`;
-    document.getElementById("summary-evidence").textContent = `${paper.status || "warming_up"} / ${closed} of 30 closes`;
+    const evidence = researchEvidence(state.researchAgent);
+    document.getElementById("summary-primary-strategy").textContent = `${evidence.strategy} / rules frozen`;
+    document.getElementById("summary-evidence").textContent = `${evidence.paperStatus} / ${evidence.paperClosed} of 30 closes`;
     document.getElementById("summary-universe").textContent = `${state.universe.length} liquid stocks / no cherry-picking`;
-    document.getElementById("summary-next-action").textContent = "Collect prospective shadow outcomes";
+    document.getElementById("summary-next-action").textContent = evidence.nextAction;
   }
 
   function renderDecisionPanel() {
@@ -1357,11 +1403,12 @@
     if (!status || !title || !trade || !numbers || !actions) return;
 
     if (!setup) {
+      const evidence = researchEvidence(state.researchAgent);
       status.textContent = "No trade";
       title.textContent = "No setup is ready";
-      trade.textContent = "Add stock symbols, load IBKR bars, then sync IBKR before considering a real order.";
+      trade.textContent = evidence.nextAction;
       numbers.innerHTML = "";
-      actions.textContent = "Next: enter tickers in Stocks to scan.";
+      actions.textContent = `Research gate: ${evidence.holdoutStatus}; paper ${evidence.paperClosed}/30.`;
       return;
     }
 
@@ -2345,6 +2392,30 @@
           ["Parked", "Other trend and mean-reversion variants", "Cooling down", "No nearby filters or threshold tuning", "A distinct predeclared hypothesis"]
         ])}
       `;
+    } else if (state.activeTab === "evidence") {
+      const evidence = researchEvidence(state.researchAgent);
+      const development = evidence.plan.development || {};
+      const validation = evidence.plan.development_validation || {};
+      target.innerHTML = `
+        <div class="health-grid">
+          <div class="health-card"><span>Signal development</span><strong>${evidence.signalStatus}</strong></div>
+          <div class="health-card"><span>Execution plan</span><strong>${evidence.executionStatus}</strong></div>
+          <div class="health-card"><span>Final holdout</span><strong>${evidence.holdoutStatus}</strong></div>
+          <div class="health-card"><span>Paper evidence</span><strong>${evidence.paperClosed} / 30 closes</strong></div>
+          <div class="health-card"><span>Data source</span><strong>${evidence.source}${evidence.isDemo ? " / demo rejected" : " / real"}</strong></div>
+          <div class="health-card"><span>Dataset fingerprint</span><strong>${evidence.datasetHash.slice(0, 12) || "unavailable"}</strong></div>
+        </div>
+        ${table(["Exact plan", "Trades", "Expectancy", "Profit factor", "Positive symbols", "Max drawdown"], [
+          ["Development", development.trades || 0, formatPct(development.expectancy), formatNumber(development.profit_factor), formatPct(development.positive_symbol_ratio), formatPct(development.max_drawdown)],
+          ["Internal validation", validation.trades || 0, formatPct(validation.expectancy), formatNumber(validation.profit_factor), formatPct(validation.positive_symbol_ratio), formatPct(validation.max_drawdown)]
+        ])}
+        <div class="health-grid">
+          <div class="health-card"><span>Validated common coverage</span><strong>${evidence.coverageLabel} / ${evidence.coverageStart} to ${evidence.coverageEnd}</strong></div>
+          <div class="health-card"><span>Reserved final holdout</span><strong>${evidence.holdout.start || "-"} to ${evidence.holdout.end || "-"} / ${evidence.holdout.rows || 0} rows</strong></div>
+          <div class="health-card"><span>Holdout ID</span><strong>${evidence.holdout.id || "unavailable"}</strong></div>
+          <div class="health-card"><span>Next valid action</span><strong>${evidence.nextAction}</strong></div>
+        </div>
+      `;
     } else if (state.activeTab === "sectors") {
       target.innerHTML = table(["Sector", "Symbols", "Ready", "Best", "Avg score", "Avg expected", "Avg vol", "Avg drawdown"], sectorRows());
     } else if (state.activeTab === "why") {
@@ -2481,10 +2552,12 @@
 
   function table(headers, rows) {
     return `
-      <table>
-        <thead><tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr></thead>
-        <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
-      </table>
+      <div class="analysis-table-wrap">
+        <table>
+          <thead><tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      </div>
     `;
   }
 
@@ -3089,6 +3162,7 @@
     learningGraph,
     setupLearningNodes,
     tradeFeatures,
+    researchEvidence,
     formatPct,
     formatMoney
   };

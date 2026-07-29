@@ -72,6 +72,20 @@ const researchAgent = { schema_version: 1, created_at: "2026-07-25T00:00:00Z", e
 assert.equal(validateResearchAgent(researchAgent).ok, true);
 assert.equal(validateResearchAgent({ ...researchAgent, entries: [{ ...researchAgent.entries[0], risk_pct: 0.02 }] }).ok, false);
 assert.equal(validateResearchAgent({ ...researchAgent, entries: [{ ...researchAgent.entries[0], stop: 210 }] }).ok, false);
+const evidenceSummary = app.researchEvidence({
+  styles: { SWING_20D: { strategy: "low_vol_trend", metrics: { holdout_exposed: false, execution_plan: {} }, acceptance: { status: "reject" } } },
+  development_diagnostics: [{ style: "SWING_20D", strategy: "low_vol_trend", signal_status: "pass", execution_status: "pass", execution_plan: { development: { trades: 30 } } }],
+  paper_evidence: { status: "warming_up", current_closed_trades: 0 },
+  data_provenance: { source: "Yahoo Finance", is_demo: false, dataset_sha256: "abc123", coverage: { AAPL: { first: "2020-01-01", last: "2026-07-28" } } },
+  holdout: { id: "held-back" }
+});
+assert.equal(evidenceSummary.executionStatus, "pass");
+assert.equal(evidenceSummary.plan.development.trades, 30, "evidence summary should recover cooldown plan metrics from diagnostics");
+assert(evidenceSummary.nextAction.includes("materially new data"), "protected holdout should name the next valid evidence");
+assert.equal(app.researchEvidence({
+  styles: { SWING_20D: { strategy: "low_vol_trend", metrics: { holdout_exposed: true, execution_plan: { development: {}, final: { trades: 12 } } }, acceptance: { status: "pass" } } },
+  paper_evidence: { status: "warming_up" }
+}).plan.development_validation.trades, 12, "published execution plans should label their final development fold consistently");
 const validatedCandidate = {
   ...researchAgent.entries[0],
   plan_id: "exact-plan",

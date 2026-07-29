@@ -633,6 +633,20 @@ def test_research_loop_selects_best_executable_plan_not_best_signal_score(monkey
     assert result["research_protocol"]["excluded_holdout_trials"] == [{"style": "SWING_20D", "strategy": "plan_best"}]
 
     final_exposures.clear()
+    result = run_research_loop(
+        data,
+        ["TEST"],
+        candidates=[{"style": "SWING_20D", "strategy": "plan_best"}],
+        folds=4,
+        warmup=200,
+        excluded_holdout_trials={("SWING_20D", "plan_best")},
+    )
+
+    assert final_exposures == []
+    assert result["styles"]["SWING_20D"]["metrics"]["holdout_exposed"] is False
+    assert result["styles"]["SWING_20D"]["metrics"]["execution_plan"]["development"]["expectancy"] == 0.01
+
+    final_exposures.clear()
     monkeypatch.setattr(research_agent, "_execution_score", lambda evaluation: 1)
     result = run_research_loop(
         data,
