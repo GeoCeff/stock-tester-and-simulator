@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -15,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, DATA_SOURCE_STOOQ, DATA_SOURCE_YAHOO, get_ticker_frame, load_market_data
-from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, DEFAULT_SHADOW_LEDGER_PATH, append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
+from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, DEFAULT_CANDIDATES, DEFAULT_SHADOW_LEDGER_PATH, append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
 
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
@@ -25,6 +26,12 @@ NEWS_SNAPSHOT_MAX_AGE = timedelta(minutes=30)
 MIN_HISTORY_COVERAGE = 0.90
 MAX_LATEST_BAR_AGE_DAYS = 7
 MARKET_DATA_READY_TIME = clock_time(16, 15)
+
+
+def research_end_date(now=None):
+    """Return the provider-exclusive end date for completed New York sessions."""
+    now = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("America/New_York"))
+    return now.date() if now.time() < MARKET_DATA_READY_TIME else now.date() + timedelta(days=1)
 
 
 def validate_research_data(data, status, symbols, start, end, warmup, folds, *, now=None):
@@ -56,13 +63,49 @@ def validate_research_data(data, status, symbols, start, end, warmup, folds, *, 
             raise RuntimeError(f"{symbol} latest bar is stale")
         if (ohlc.index.max() - ohlc.index.min()).days < minimum_span:
             raise RuntimeError(f"{symbol} does not cover 90% of the requested history")
+        price_tolerance = ohlc.abs().max(axis=1).clip(lower=1) * 1e-12
         if (
             not np.isfinite(ohlc.to_numpy()).all()
             or (ohlc <= 0).any().any()
-            or (ohlc["High"] < ohlc[["Open", "Close"]].max(axis=1)).any()
-            or (ohlc["Low"] > ohlc[["Open", "Close"]].min(axis=1)).any()
+            or (ohlc["High"] + price_tolerance < ohlc[["Open", "Close"]].max(axis=1)).any()
+            or (ohlc["Low"] - price_tolerance > ohlc[["Open", "Close"]].min(axis=1)).any()
         ):
             raise RuntimeError(f"{symbol} has invalid OHLC prices")
+
+
+def research_data_provenance(data, status, symbols):
+    """Describe and fingerprint the exact validated OHLC snapshot used by a run."""
+    digest = hashlib.sha256()
+    coverage = {}
+    for symbol in sorted(symbols):
+        frame = get_ticker_frame(data, symbol)[["Open", "High", "Low", "Close"]].dropna().sort_index()
+        digest.update(symbol.encode("utf-8"))
+        digest.update(frame.to_csv(date_format="%Y-%m-%d", float_format="%.10g").encode("utf-8"))
+        coverage[symbol] = {
+            "first": str(frame.index.min().date()),
+            "last": str(frame.index.max().date()),
+            "rows": int(len(frame)),
+        }
+    return {
+        **{
+            key: status.get(key)
+            for key in (
+                "source",
+                "requested_source",
+                "provider_attempts",
+                "date_start",
+                "date_end",
+                "row_count",
+                "loaded_tickers",
+                "unavailable_tickers",
+                "is_demo",
+            )
+        },
+        "dataset_sha256": digest.hexdigest(),
+        "coverage": coverage,
+        "pandas_version": pd.__version__,
+        "numpy_version": np.__version__,
+    }
 
 
 def acquire_watch_lock(path=WATCH_LOCK_PATH):
@@ -152,7 +195,7 @@ def run_once(args):
     universe = [symbol.strip().upper() for symbol in args.symbols.split(",") if symbol.strip()]
     if not universe or args.years <= 0 or args.folds < 4 or args.warmup < 20 or args.cost_bps < 0:
         raise ValueError("symbols, positive years, at least 4 folds, warmup >= 20, and non-negative costs required")
-    end = datetime.now(timezone.utc).date() + timedelta(days=1)
+    end = research_end_date()
     start = end - timedelta(days=round(args.years * 365.25))
     data, status = load_market_data(
         [*universe, BENCHMARK_SYMBOL],
@@ -165,6 +208,10 @@ def run_once(args):
     if data is None or data.empty:
         raise RuntimeError(status.get("message", "real market data unavailable"))
     validate_research_data(data, status, [*universe, BENCHMARK_SYMBOL], start, end, args.warmup, args.folds)
+    provenance = research_data_provenance(data, status, [*universe, BENCHMARK_SYMBOL])
+    if getattr(args, "preflight_only", False):
+        print(json.dumps(provenance, indent=2, sort_keys=True))
+        return {"status": "preflight_only", "data_provenance": provenance}
 
     result = run_research_loop(
         data,
@@ -172,29 +219,21 @@ def run_once(args):
         folds=args.folds,
         warmup=args.warmup,
         cost_bps_per_side=args.cost_bps,
-        excluded_holdout_trials=recent_rejected_holdout_trials(),
+        # ponytail: monitoring never spends another holdout; add a separately
+        # predeclared authorization path only when genuinely new data exists.
+        excluded_holdout_trials={
+            *recent_rejected_holdout_trials(),
+            *((candidate["style"], candidate["strategy"]) for candidate in DEFAULT_CANDIDATES),
+        },
     )
-    result["data_provenance"] = {
-        key: status.get(key)
-        for key in (
-            "source",
-            "requested_source",
-            "provider_attempts",
-            "date_start",
-            "date_end",
-            "row_count",
-            "loaded_tickers",
-            "unavailable_tickers",
-            "is_demo",
-        )
-    }
+    result["data_provenance"] = provenance
     try:
         publish_research_result(result)
         news_status = refresh_news()
         apply_news_snapshot(result)
         result["paper_evidence"] = update_paper_ledger(result, data, cost_bps_per_side=args.cost_bps)
         result["shadow_evidence"] = update_paper_ledger(
-            {"created_at": result["created_at"], "entries": result["shadow_entries"]},
+            {"created_at": result["created_at"], "universe": result["universe"], "entries": result["shadow_entries"]},
             data,
             path=DEFAULT_SHADOW_LEDGER_PATH,
             cost_bps_per_side=args.cost_bps,
@@ -220,6 +259,7 @@ def main():
     parser.add_argument("--folds", type=int, default=5, help="Chronological folds; the last stays untouched until selection")
     parser.add_argument("--warmup", type=int, default=200, help="Indicator warmup rows")
     parser.add_argument("--cost-bps", type=float, default=10, help="Estimated cost per entry/exit side")
+    parser.add_argument("--preflight-only", action="store_true", help="validate and fingerprint real data without evaluating strategies or writing evidence")
     parser.add_argument("--watch-minutes", type=float, default=0, help="Repeat interval; 0 runs once")
     args = parser.parse_args()
     if args.watch_minutes < 0:

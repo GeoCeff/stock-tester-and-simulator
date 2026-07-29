@@ -1,5 +1,23 @@
 # Strategy Research Log
 
+## 2026-07-29 — Focused real-data monitoring and portfolio drawdown correction
+
+- Goal mismatch corrected before the run: routine research still evaluated the broad strategy/style matrix. The production default now evaluates only frozen `SWING_20D / low_vol_trend`; the larger common-strategy set remains a dormant watchlist.
+- Holdout protection tightened: ordinary monitoring explicitly excludes the primary candidate from final-holdout exposure. A future holdout needs a separately implemented, predeclared authorization using genuinely new data.
+- Added a non-mutating `--preflight-only` mode. It validates recognized real data and prints an exact SHA-256 plus per-symbol first/last/count and pandas/NumPy versions without evaluating strategies or writing evidence.
+- First preflight correctly rejected an incomplete New York session. The request boundary now automatically stops at the last completed session before 16:15 New York time.
+- Second preflight exposed adjusted-price floating noise of roughly `3.6e-15`. OHLC validation now tolerates only machine-scale error while continuing to reject economically meaningful invalid bars.
+- Successful preflight: Yahoo Finance, all 20 fixed stocks plus SPY, 2,009 completed daily rows each from 2018-07-30 through 2026-07-28, no missing ticker, no demo fallback.
+- Cost-integrity mistake corrected: an older open paper position could close using a later run's CLI cost. Positions now persist and reuse their originating cost; legacy plan IDs recover their embedded cost or fail closed.
+- The first focused `daily-bars-v12` monitoring result showed −63.21% development drawdown and −43.65% internal-validation drawdown despite 1.52%/1.02% expectancy and 1.46/1.47 profit factors. Root cause: every exit-date cohort was incorrectly treated as 100% of portfolio capital.
+- `daily-bars-v13` now sums trade contributions across the fixed 20 universe slots, leaving inactive slots in cash. Corrected exact-plan development: 585 trades, 1.5235% expectancy, 1.463 profit factor, 80% positive symbols, and −4.75% drawdown. Internal validation: 210 trades, 1.0594% expectancy, 1.494 profit factor, 70% positive symbols, and −3.95% drawdown.
+- Both signal and exact bracket plan passed development validation. Final holdout remained unexposed because the trend family is cooling down and routine monitoring cannot spend a holdout.
+- The current v13 snapshot produced JPM and UNH shadow candidates dated 2026-07-27. They were not added to the ledger because older v2 JPM/UNH shadow positions filled on 2026-07-27 and remain open; the one-position-per-symbol/style rule correctly prevented overlap. Old v2 outcomes remain diagnostic-only and cannot validate v13.
+- Actionable entries, current-plan closed trades, validated plans, broker requests, and orders remain zero. News had no actionable candidate to approve.
+- Runtime UI QA corrected a 25px horizontal page overflow near the 1,265px breakpoint by allowing the research panel's metric column to shrink. Desktop, medium-width, and 390px mobile checks now show no page overflow or browser console warnings/errors.
+
+Decision: retain the frozen low-volatility hypothesis. Collect only future v13 shadow evidence after legacy positions close; do not tune the rule, narrow the universe, reuse the holdout, or interpret corrected development metrics as live readiness.
+
 ## 2026-07-29 — Narrow research mandate
 
 - `low_vol_trend` remains the single primary strategy with its 200-day trend, 63-day momentum, and below-median volatility rules frozen.

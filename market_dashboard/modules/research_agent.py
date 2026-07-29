@@ -46,12 +46,13 @@ STRATEGY_FAMILIES = {
     "rsi_mean_reversion": "mean_reversion",
     "bollinger": "mean_reversion",
 }
-DEFAULT_CANDIDATES = [
+WATCHLIST_CANDIDATES = [
     {"style": style, "strategy": strategy}
     for style in STYLE_CONFIG
     for strategy in STRATEGIES
     if strategy not in {"low_vol_trend", "breadth_confirmed_trend", "benchmark_confirmed_trend"} or style == "SWING_20D"
 ]
+DEFAULT_CANDIDATES = [{"style": "SWING_20D", "strategy": "low_vol_trend"}]
 DEFAULT_GATES = {
     "min_development_trades": 30,
     "min_final_trades": 10,
@@ -74,7 +75,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v12"
+EXECUTION_PLAN_VERSION = "daily-bars-v13"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -129,6 +130,18 @@ def _metrics(returns, trade_returns):
         "max_drawdown": float(drawdown.min()) if not drawdown.empty else 0.0,
         "total_return": float(equity.iloc[-1] - 1) if not equity.empty else 0.0,
     }
+
+
+def _realized_portfolio_returns(dated_trade_returns, portfolio_slots):
+    if portfolio_slots < 1:
+        raise ValueError("portfolio slots must be positive")
+    if not dated_trade_returns:
+        return pd.Series(dtype=float)
+    return (
+        pd.DataFrame(dated_trade_returns, columns=["date", "return"])
+        .groupby("date")["return"].sum().sort_index()
+        / portfolio_slots
+    )
 
 
 def _folds(length, folds, warmup):
@@ -333,12 +346,8 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                 index = exit_index + 1
             symbol_folds[symbol].append(_metrics(pd.Series(dtype=float), symbol_trade_returns))
         trade_returns = [value for _, value in dated_trade_returns]
-        # ponytail: realized exit-cohort curve; add daily position MTM only when portfolio sizing is modeled.
-        realized_returns = (
-            pd.DataFrame(dated_trade_returns, columns=["date", "return"])
-            .groupby("date")["return"].mean().sort_index()
-            if dated_trade_returns else pd.Series(dtype=float)
-        )
+        # ponytail: fixed universe slots leave inactive capital in cash.
+        realized_returns = _realized_portfolio_returns(dated_trade_returns, len(prepared))
         metrics = _metrics(realized_returns, trade_returns)
         fold_metrics.append({
             key: metrics[key] for key in ("trades", "win_rate", "expectancy", "profit_factor", "max_drawdown")
@@ -493,6 +502,7 @@ def _latest_candidates(data, universe, selected):
                 "stop_atr": config["stop_atr"],
                 "target_r": config["target_r"],
                 "risk_pct": config["risk_pct"],
+                "portfolio_slots": len(universe),
                 "status": "PENDING_NEWS_AND_LIVE_GATES",
             })
     return rows
@@ -508,6 +518,7 @@ def _paper_plan_id(row, cost_bps_per_side):
             bollinger,
             rsi,
             _metrics,
+            _realized_portfolio_returns,
             _bracket_exit,
             evaluate_candidate,
             evaluate_execution_plan,
@@ -519,12 +530,35 @@ def _paper_plan_id(row, cost_bps_per_side):
         f"stop={row.get('stop_atr', config['stop_atr']):g}atr:"
         f"target={row.get('target_r', config['target_r']):g}r:"
         f"risk={row.get('risk_pct', config['risk_pct']):g}:"
+        f"slots={int(row.get('portfolio_slots', 1))}:"
         f"entry={row.get('entry_valid_bars', ENTRY_VALID_BARS)}:"
         f"engine={EXECUTION_PLAN_VERSION}:"
         f"cost={cost_bps_per_side:g}bps:"
         f"news={row.get('news_version', 'news-unversioned')}:"
         f"gate={row.get('news_action', 'unreviewed')}"
     )
+
+
+def _position_cost_bps(position):
+    value = position.get("cost_bps_per_side")
+    if value is None:
+        try:
+            value = position["plan_id"].split(":cost=", 1)[1].split("bps:", 1)[0]
+        except (KeyError, IndexError):
+            return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if np.isfinite(value) and value >= 0 else None
+
+
+def _plan_portfolio_slots(plan_id):
+    try:
+        value = int(plan_id.split(":slots=", 1)[1].split(":", 1)[0])
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel_withdrawn=True):
@@ -558,6 +592,11 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
         ):
             ledger["cancelled"].append({**position, "reason": "research or news gate withdrew pending entry"})
             continue
+        position_cost_bps = _position_cost_bps(position)
+        if position_cost_bps is None:
+            ledger["cancelled"].append({**position, "reason": "position missing its original cost assumption"})
+            continue
+        position["cost_bps_per_side"] = position_cost_bps
         frame = get_ticker_frame(data, position["symbol"])
         if not position.get("entry_date"):
             position.setdefault("limit_entry", (candidate or {}).get("entry"))
@@ -617,8 +656,8 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
             "exit": exit_price,
             "exit_date": exit_date,
             "exit_reason": exit_reason,
-            "cost_bps_per_side": cost_bps_per_side,
-            "return": gross_return - 2 * cost_bps_per_side / 10_000,
+            "cost_bps_per_side": position_cost_bps,
+            "return": gross_return - 2 * position_cost_bps / 10_000,
         })
 
     existing = {
@@ -642,6 +681,7 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
         ):
             still_open.append({
                 **entry,
+                "cost_bps_per_side": cost_bps_per_side,
                 "limit_entry": entry["entry"],
                 "entry": None,
                 "entry_date": None,
@@ -707,10 +747,13 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
         )
         if rows and (not chronology_valid or not prices_valid):
             raise ValueError("paper ledger closed evidence requires valid signal/fill/exit/as-of chronology and finite returns reconciled to positive prices and recorded costs")
-        realized_returns = (
-            pd.DataFrame({"date": exit_dates.to_numpy(), "return": returns})
-            .groupby("date")["return"].mean().sort_index()
-            if rows else pd.Series(dtype=float)
+        portfolio_slots = {int(row.get("portfolio_slots", 1)) for row in rows}
+        if any(value < 1 for value in portfolio_slots) or len(portfolio_slots) > 1:
+            raise ValueError("paper ledger plan evidence requires one positive portfolio slot count")
+        plan_slots = next(iter(portfolio_slots), _plan_portfolio_slots(plan_id) or 1)
+        realized_returns = _realized_portfolio_returns(
+            list(zip(exit_dates.to_numpy(), returns)),
+            plan_slots,
         )
         metrics = _metrics(realized_returns, returns)
         max_drawdown = metrics["max_drawdown"]
@@ -742,6 +785,7 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
             "expectancy": expectancy,
             "profit_factor": profit_factor,
             "max_drawdown": max_drawdown,
+            "portfolio_slots": plan_slots,
         }
     validated_plans = [
         plan_id for plan_id in current_plan_ids

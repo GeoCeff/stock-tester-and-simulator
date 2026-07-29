@@ -1869,7 +1869,7 @@ button:active:not(:disabled) {
   }
 
   .research-panel {
-    grid-template-columns: minmax(220px, .78fr) minmax(360px, 1.22fr);
+    grid-template-columns: minmax(180px, .78fr) minmax(0, 1.22fr);
   }
 
   .research-panel > button {

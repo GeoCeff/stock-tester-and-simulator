@@ -17,13 +17,18 @@ def test_runner_records_holdout_result_when_postprocessing_fails(monkeypatch):
         "shadow_entries": [],
     }
     recorded = []
+    runner_kwargs = {}
     monkeypatch.setattr(research_runner, "load_market_data", lambda *args, **kwargs: (
         pd.DataFrame({"Close": [100]}),
         {"source": "Yahoo Finance", "is_demo": False},
     ))
     monkeypatch.setattr(research_runner, "validate_research_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(research_runner, "research_data_provenance", lambda *args, **kwargs: {"dataset_sha256": "test"})
     monkeypatch.setattr(research_runner, "recent_rejected_holdout_trials", lambda: set())
-    monkeypatch.setattr(research_runner, "run_research_loop", lambda *args, **kwargs: result)
+    def fake_research_loop(*args, **kwargs):
+        runner_kwargs.update(kwargs)
+        return result
+    monkeypatch.setattr(research_runner, "run_research_loop", fake_research_loop)
     monkeypatch.setattr(research_runner, "publish_research_result", lambda *args, **kwargs: None)
     monkeypatch.setattr(research_runner, "refresh_news", lambda: "")
     monkeypatch.setattr(research_runner, "apply_news_snapshot", lambda *args, **kwargs: None)
@@ -42,6 +47,34 @@ def test_runner_records_holdout_result_when_postprocessing_fails(monkeypatch):
         ))
 
     assert recorded == [result]
+    assert ("SWING_20D", "low_vol_trend") in runner_kwargs["excluded_holdout_trials"]
+
+
+def test_preflight_only_validates_data_without_evaluating_or_writing(monkeypatch):
+    monkeypatch.setattr(research_runner, "load_market_data", lambda *args, **kwargs: (
+        pd.DataFrame({"Close": [100]}),
+        {"source": "Yahoo Finance", "is_demo": False},
+    ))
+    monkeypatch.setattr(research_runner, "validate_research_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(research_runner, "research_data_provenance", lambda *args, **kwargs: {
+        "dataset_sha256": "validated-snapshot",
+    })
+    monkeypatch.setattr(research_runner, "run_research_loop", lambda *args, **kwargs: pytest.fail("preflight evaluated a strategy"))
+    monkeypatch.setattr(research_runner, "publish_research_result", lambda *args, **kwargs: pytest.fail("preflight wrote a result"))
+
+    result = research_runner.run_once(SimpleNamespace(
+        symbols="TEST",
+        years=1,
+        folds=4,
+        warmup=20,
+        cost_bps=10,
+        preflight_only=True,
+    ))
+
+    assert result == {
+        "status": "preflight_only",
+        "data_provenance": {"dataset_sha256": "validated-snapshot"},
+    }
 
 
 def test_research_data_gate_requires_current_complete_real_ohlc():
@@ -76,6 +109,13 @@ def test_research_data_gate_requires_current_complete_real_ohlc():
         data, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4,
         now=pd.Timestamp("2025-01-31T22:00:00Z").to_pydatetime(),
     )
+    rounding_noise = data.copy()
+    rounding_noise.loc[index[-1], ("Low", "TEST")] = (
+        rounding_noise.loc[index[-1], ("Close", "TEST")] + 1e-14
+    )
+    research_runner.validate_research_data(
+        rounding_noise, status, ["TEST", "SPY"], "2024-01-01", "2025-02-01", 200, 4
+    )
 
     with pytest.raises(RuntimeError, match="missing required symbols"):
         research_runner.validate_research_data(
@@ -105,6 +145,40 @@ def test_research_data_gate_requires_current_complete_real_ohlc():
         )
 
 
+def test_research_end_date_excludes_an_open_new_york_session():
+    before_close = pd.Timestamp("2026-07-29T19:00:00Z").to_pydatetime()
+    after_close = pd.Timestamp("2026-07-29T21:00:00Z").to_pydatetime()
+
+    assert str(research_runner.research_end_date(before_close)) == "2026-07-29"
+    assert str(research_runner.research_end_date(after_close)) == "2026-07-30"
+
+
+def test_research_data_provenance_fingerprints_exact_ohlc_values():
+    index = pd.date_range("2026-01-05", periods=2, freq="B")
+    data = pd.DataFrame({
+        (field, symbol): [100, 101]
+        for symbol in ("TEST", "SPY")
+        for field in ("Open", "High", "Low", "Close")
+    }, index=index)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    status = {"source": "Yahoo Finance", "loaded_tickers": ["TEST", "SPY"], "is_demo": False}
+
+    first = research_runner.research_data_provenance(data, status, ["TEST", "SPY"])
+    second = research_runner.research_data_provenance(data, status, ["TEST", "SPY"])
+    changed = data.copy()
+    changed.loc[index[-1], ("Close", "TEST")] = 102
+
+    assert first["dataset_sha256"] == second["dataset_sha256"]
+    assert first["dataset_sha256"] != research_runner.research_data_provenance(
+        changed, status, ["TEST", "SPY"]
+    )["dataset_sha256"]
+    assert first["coverage"]["TEST"] == {
+        "first": "2026-01-05",
+        "last": "2026-01-06",
+        "rows": 2,
+    }
+
+
 def test_research_metrics_include_starting_capital_and_reject_nonfinite_returns():
     metrics = research_agent._metrics(pd.Series([-0.2]), [-0.2])
 
@@ -114,6 +188,18 @@ def test_research_metrics_include_starting_capital_and_reject_nonfinite_returns(
         research_agent._metrics(pd.Series([np.nan]), [0.01])
     with pytest.raises(ValueError, match="non-finite return"):
         research_agent._metrics(pd.Series([0.01]), [np.inf])
+
+
+def test_realized_drawdown_respects_fixed_portfolio_slots():
+    returns = research_agent._realized_portfolio_returns([
+        ("2026-01-05", 0.10),
+        ("2026-01-05", -0.05),
+        ("2026-01-06", -0.10),
+    ], 20)
+
+    assert np.isclose(returns.iloc[0], 0.0025)
+    assert np.isclose(returns.iloc[1], -0.005)
+    assert np.isclose(research_agent._metrics(returns, [0.10, -0.05, -0.10])["max_drawdown"], -0.005)
 
 
 def test_execution_plan_acceptance_enforces_drawdown():
@@ -797,6 +883,13 @@ def test_every_production_strategy_declares_a_family():
     assert set(research_agent.STRATEGIES) == set(research_agent.STRATEGY_FAMILIES)
 
 
+def test_default_research_lane_is_frozen_low_volatility_trend():
+    assert research_agent.DEFAULT_CANDIDATES == [
+        {"style": "SWING_20D", "strategy": "low_vol_trend"}
+    ]
+    assert len(research_agent.WATCHLIST_CANDIDATES) > len(research_agent.DEFAULT_CANDIDATES)
+
+
 def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
     dates = pd.date_range("2026-01-05", periods=2, freq="B")
     data = pd.DataFrame({
@@ -832,6 +925,49 @@ def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
     assert ledger["closed"][0]["entry"] == 100
     assert ledger["closed"][0]["exit_reason"] == "stop"
     assert ledger["closed"][0]["return"] < 0
+
+
+def test_paper_position_keeps_its_original_cost_assumption(tmp_path):
+    dates = pd.date_range("2026-01-05", periods=2, freq="B")
+    data = pd.DataFrame({
+        ("Open", "TEST"): [100, 100],
+        ("High", "TEST"): [101, 106],
+        ("Low", "TEST"): [99, 98],
+        ("Close", "TEST"): [100, 103],
+    }, index=dates)
+    data.columns = pd.MultiIndex.from_tuples(data.columns)
+    entry = {
+        "symbol": "TEST",
+        "side": "LONG",
+        "style": "SWING_20D",
+        "strategy": "low_vol_trend",
+        "signal_date": "2026-01-05",
+        "entry": 100,
+        "stop": 99,
+        "target": 105,
+        "max_hold": 20,
+        "news_action": "pass",
+    }
+    path = tmp_path / "paper.json"
+
+    update_paper_ledger(
+        {"created_at": "2026-01-05T22:00:00Z", "entries": [entry]},
+        data.iloc[:1],
+        path=path,
+        cost_bps_per_side=10,
+        cancel_withdrawn=False,
+    )
+    update_paper_ledger(
+        {"created_at": "2026-01-06T22:00:00Z", "entries": [entry]},
+        data,
+        path=path,
+        cost_bps_per_side=100,
+        cancel_withdrawn=False,
+    )
+    closed = json.loads(path.read_text(encoding="utf-8"))["closed"][0]
+
+    assert closed["cost_bps_per_side"] == 10
+    assert closed["return"] == closed["exit"] / closed["entry"] - 1 - 0.002
 
 
 def test_paper_ledger_does_not_assume_fill_bar_target_sequence(tmp_path):
