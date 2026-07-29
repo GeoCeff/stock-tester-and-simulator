@@ -1,5 +1,20 @@
 # Strategy Research Log
 
+## 2026-07-29 — Daily mark-to-market drawdown
+
+- Methodology mistake corrected: v13 moved portfolio equity only when trades exited. A position could suffer a large open loss, recover before exit, and hide the actual drawdown used by the 15% acceptance gate.
+- Exact-plan replay now maintains one capital slot per universe symbol, marks every open position daily, applies the entry cost on fill and the exit cost on the actual bracket exit, and leaves inactive slots in cash.
+- Paper trades now persist the exact observed daily mark path at closure. Missing, non-positive, non-finite, duplicate-date, out-of-order, or overlapping paths fail closed; same-day legacy closes remain reconstructable for diagnostic summaries only.
+- A regression trade that fell 20% while open and exited flat now records a 10.05% drawdown in a two-slot portfolio instead of nearly zero.
+- The execution identity advances to `daily-bars-v14`; no v13 development or shadow observation can validate v14.
+- Real-data preflight passed on Yahoo Finance with all 20 fixed stocks plus SPY, 2,009 completed daily rows each through 2026-07-28, and no demo fallback.
+- Focused v14 monitoring evaluated only frozen `SWING_20D / low_vol_trend`. Exact-plan development: 585 trades, 1.5348% expectancy, 1.464 profit factor, and −5.64% daily mark-to-market drawdown. Internal validation: 210 trades, 1.0183% expectancy, 1.468 profit factor, and −5.75% drawdown.
+- Signal and exact-plan development gates passed. The final holdout remained unexposed under the existing cooldown and ordinary-monitoring exclusion.
+- The v14 snapshot produced JPM, LLY, and UNH shadow signals dated 2026-07-28. Existing v2 JPM/UNH positions prevented overlap. A pre-fill LLY plan fingerprint was safely cancelled after the final evidence-code change and replaced by the current v14 LLY limit, which is pending its first genuinely future bar. All are non-actionable shadow observations.
+- Exact-plan paper closes, shadow closes, validated plans, broker requests, and orders remain zero. No news gate was run for a live candidate.
+
+Decision: retain the frozen rule and collect future v14 paths. Do not compare v14’s higher drawdown to v13 as an independent strategy result; it is a stricter measurement of the same historical trades.
+
 ## 2026-07-29 — Server-side qualification reconciliation
 
 - Safety audit found that the browser checked the model pack, but the live-order server validated only the research-agent artifact. A stale, disabled, mismatched, or altered model pack was therefore not independently enforced at the final submission boundary.

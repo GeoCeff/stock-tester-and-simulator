@@ -75,7 +75,7 @@ DEFAULT_RESEARCH_HISTORY_PATH = (
     Path(__file__).resolve().parents[2] / "execution_dashboard" / "data" / "research_history.jsonl"
 )
 ENTRY_VALID_BARS = 3
-EXECUTION_PLAN_VERSION = "daily-bars-v13"
+EXECUTION_PLAN_VERSION = "daily-bars-v14"
 HOLDOUT_COOLDOWN_DAYS = 90
 BENCHMARK_SYMBOL = "SPY"
 PAPER_MIN_CLOSED_TRADES = 30
@@ -132,16 +132,81 @@ def _metrics(returns, trade_returns):
     }
 
 
-def _realized_portfolio_returns(dated_trade_returns, portfolio_slots):
+def _mark_to_market_portfolio_returns(trades, portfolio_slots):
     if portfolio_slots < 1:
         raise ValueError("portfolio slots must be positive")
-    if not dated_trade_returns:
+    if not trades:
         return pd.Series(dtype=float)
-    return (
-        pd.DataFrame(dated_trade_returns, columns=["date", "return"])
-        .groupby("date")["return"].sum().sort_index()
-        / portfolio_slots
-    )
+    symbols = {str(row.get("symbol", "")) for row in trades}
+    if "" in symbols or len(symbols) > portfolio_slots:
+        raise ValueError("trade paths exceed available portfolio slots")
+    paths = {}
+    for row in trades:
+        raw_path = row.get("mark_path")
+        if raw_path is None and row.get("entry_date") == row.get("exit_date"):
+            raw_path = [{"date": row["exit_date"], "price": row.get("exit")}]
+        if (
+            not isinstance(raw_path, list)
+            or not raw_path
+            or any(not isinstance(item, dict) for item in raw_path)
+        ):
+            raise ValueError("closed trade requires its observed mark-to-market path")
+        path = pd.Series(
+            [item.get("price") for item in raw_path],
+            index=pd.to_datetime([item.get("date") for item in raw_path], errors="coerce"),
+            dtype=float,
+        )
+        if (
+            path.index.hasnans
+            or path.index.has_duplicates
+            or not path.index.is_monotonic_increasing
+            or not np.isfinite(path.to_numpy()).all()
+            or (path <= 0).any()
+            or path.index[0] != pd.Timestamp(row.get("entry_date"))
+            or path.index[-1] != pd.Timestamp(row.get("exit_date"))
+        ):
+            raise ValueError("closed trade has an invalid mark-to-market path")
+        paths[id(row)] = path
+    calendar = pd.DatetimeIndex(sorted(set().union(*(path.index for path in paths.values()))))
+    curves = []
+    for symbol in sorted(symbols):
+        curve = pd.Series(1.0, index=calendar)
+        capital = 1.0
+        previous_exit = None
+        symbol_trades = sorted(
+            (row for row in trades if row.get("symbol") == symbol),
+            key=lambda row: pd.Timestamp(row["entry_date"]),
+        )
+        for row in symbol_trades:
+            path = paths[id(row)]
+            if previous_exit is not None and path.index[0] <= previous_exit:
+                raise ValueError("paper trades overlap within one portfolio slot")
+            try:
+                cost = float(row["cost_bps_per_side"]) / 10_000
+                entry = float(row["entry"])
+                exit_price = float(row["exit"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("closed trade has invalid prices or costs") from error
+            if (
+                not all(np.isfinite(value) for value in (cost, entry, exit_price))
+                or cost < 0
+                or entry <= 0
+                or exit_price <= 0
+                or not np.isclose(path.iloc[-1], exit_price, rtol=0, atol=1e-12)
+            ):
+                raise ValueError("closed trade has invalid prices or costs")
+            curve.loc[path.index] = capital * (
+                path / entry - cost
+            )
+            curve.loc[path.index[-1]] = capital * (exit_price / entry - 2 * cost)
+            capital = float(curve.loc[path.index[-1]])
+            curve.loc[curve.index > path.index[-1]] = capital
+            previous_exit = path.index[-1]
+        curves.append(curve)
+    portfolio_equity = (sum(curves, start=pd.Series(0.0, index=calendar)) + portfolio_slots - len(curves)) / portfolio_slots
+    previous = portfolio_equity.shift(1)
+    previous.iloc[0] = 1.0
+    return portfolio_equity / previous - 1
 
 
 def _folds(length, folds, warmup):
@@ -286,7 +351,7 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
     fold_metrics = []
     symbol_folds = {symbol: [] for symbol in prepared}
     for start, end in _folds(usable_length, folds, warmup):
-        dated_trade_returns = []
+        plan_trades = []
         for symbol, frame in prepared.items():
             symbol_trade_returns = []
             frame = frame.iloc[-usable_length:]
@@ -341,14 +406,28 @@ def evaluate_execution_plan(data, universe, candidate, *, folds=4, warmup=200, c
                 if exit_price is None:
                     break
                 trade_return = exit_price / entry - 1 - 2 * cost_bps_per_side / 10_000
-                dated_trade_returns.append((frame.index[exit_index], trade_return))
+                plan_trades.append({
+                    "symbol": symbol,
+                    "entry_date": str(frame.index[fill_index].date()),
+                    "exit_date": str(frame.index[exit_index].date()),
+                    "entry": entry,
+                    "exit": exit_price,
+                    "cost_bps_per_side": cost_bps_per_side,
+                    "return": trade_return,
+                    "mark_path": [
+                        {
+                            "date": str(frame.index[row].date()),
+                            "price": exit_price if row == exit_index else float(close.iloc[row]),
+                        }
+                        for row in range(fill_index, exit_index + 1)
+                    ],
+                })
                 symbol_trade_returns.append(trade_return)
                 index = exit_index + 1
             symbol_folds[symbol].append(_metrics(pd.Series(dtype=float), symbol_trade_returns))
-        trade_returns = [value for _, value in dated_trade_returns]
-        # ponytail: fixed universe slots leave inactive capital in cash.
-        realized_returns = _realized_portfolio_returns(dated_trade_returns, len(prepared))
-        metrics = _metrics(realized_returns, trade_returns)
+        trade_returns = [row["return"] for row in plan_trades]
+        portfolio_returns = _mark_to_market_portfolio_returns(plan_trades, len(prepared))
+        metrics = _metrics(portfolio_returns, trade_returns)
         fold_metrics.append({
             key: metrics[key] for key in ("trades", "win_rate", "expectancy", "profit_factor", "max_drawdown")
         })
@@ -518,7 +597,7 @@ def _paper_plan_id(row, cost_bps_per_side):
             bollinger,
             rsi,
             _metrics,
-            _realized_portfolio_returns,
+            _mark_to_market_portfolio_returns,
             _bracket_exit,
             evaluate_candidate,
             evaluate_execution_plan,
@@ -592,6 +671,14 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
         ):
             ledger["cancelled"].append({**position, "reason": "research or news gate withdrew pending entry"})
             continue
+        if (
+            not cancel_withdrawn
+            and candidate
+            and not position.get("entry_date")
+            and position.get("plan_id") != candidate["plan_id"]
+        ):
+            ledger["cancelled"].append({**position, "reason": "exact shadow plan superseded before fill"})
+            continue
         position_cost_bps = _position_cost_bps(position)
         if position_cost_bps is None:
             ledger["cancelled"].append({**position, "reason": "position missing its original cost assumption"})
@@ -658,6 +745,14 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
             "exit_reason": exit_reason,
             "cost_bps_per_side": position_cost_bps,
             "return": gross_return - 2 * position_cost_bps / 10_000,
+            "mark_path": [
+                {
+                    "date": str(date.date()),
+                    "price": exit_price if str(date.date()) == exit_date else float(bar["Close"]),
+                }
+                for date, bar in holding.iterrows()
+                if date <= pd.Timestamp(exit_date)
+            ],
         })
 
     existing = {
@@ -747,15 +842,21 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
         )
         if rows and (not chronology_valid or not prices_valid):
             raise ValueError("paper ledger closed evidence requires valid signal/fill/exit/as-of chronology and finite returns reconciled to positive prices and recorded costs")
-        portfolio_slots = {int(row.get("portfolio_slots", 1)) for row in rows}
+        portfolio_slots = {
+            int(row["portfolio_slots"])
+            for row in rows
+            if row.get("portfolio_slots") is not None
+        }
         if any(value < 1 for value in portfolio_slots) or len(portfolio_slots) > 1:
             raise ValueError("paper ledger plan evidence requires one positive portfolio slot count")
-        plan_slots = next(iter(portfolio_slots), _plan_portfolio_slots(plan_id) or 1)
-        realized_returns = _realized_portfolio_returns(
-            list(zip(exit_dates.to_numpy(), returns)),
-            plan_slots,
+        # ponytail: pre-v13 plans did not persist slots; infer only for diagnostic
+        # summaries. Live validation independently requires the exact 20-slot plan.
+        plan_slots = max(
+            next(iter(portfolio_slots), _plan_portfolio_slots(plan_id) or 1),
+            len({row.get("symbol") for row in rows if row.get("symbol")}),
         )
-        metrics = _metrics(realized_returns, returns)
+        portfolio_returns = _mark_to_market_portfolio_returns(rows, plan_slots)
+        metrics = _metrics(portfolio_returns, returns)
         max_drawdown = metrics["max_drawdown"]
         profit_factor = metrics["profit_factor"]
         expectancy = metrics["expectancy"]

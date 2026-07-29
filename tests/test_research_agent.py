@@ -190,16 +190,24 @@ def test_research_metrics_include_starting_capital_and_reject_nonfinite_returns(
         research_agent._metrics(pd.Series([0.01]), [np.inf])
 
 
-def test_realized_drawdown_respects_fixed_portfolio_slots():
-    returns = research_agent._realized_portfolio_returns([
-        ("2026-01-05", 0.10),
-        ("2026-01-05", -0.05),
-        ("2026-01-06", -0.10),
-    ], 20)
+def test_mark_to_market_drawdown_captures_open_trade_loss():
+    trade = {
+        "symbol": "TEST",
+        "entry_date": "2026-01-05",
+        "exit_date": "2026-01-07",
+        "entry": 100,
+        "exit": 100,
+        "cost_bps_per_side": 10,
+        "mark_path": [
+            {"date": "2026-01-05", "price": 100},
+            {"date": "2026-01-06", "price": 80},
+            {"date": "2026-01-07", "price": 100},
+        ],
+    }
 
-    assert np.isclose(returns.iloc[0], 0.0025)
-    assert np.isclose(returns.iloc[1], -0.005)
-    assert np.isclose(research_agent._metrics(returns, [0.10, -0.05, -0.10])["max_drawdown"], -0.005)
+    returns = research_agent._mark_to_market_portfolio_returns([trade], 2)
+
+    assert np.isclose(research_agent._metrics(returns, [-0.002])["max_drawdown"], -0.1005)
 
 
 def test_execution_plan_acceptance_enforces_drawdown():
@@ -942,12 +950,12 @@ def test_paper_ledger_waits_for_future_bar_and_uses_stop_first(tmp_path):
 
 
 def test_paper_position_keeps_its_original_cost_assumption(tmp_path):
-    dates = pd.date_range("2026-01-05", periods=2, freq="B")
+    dates = pd.date_range("2026-01-05", periods=3, freq="B")
     data = pd.DataFrame({
-        ("Open", "TEST"): [100, 100],
-        ("High", "TEST"): [101, 106],
-        ("Low", "TEST"): [99, 98],
-        ("Close", "TEST"): [100, 103],
+        ("Open", "TEST"): [100, 100, 101],
+        ("High", "TEST"): [101, 102, 106],
+        ("Low", "TEST"): [99, 99.5, 100],
+        ("Close", "TEST"): [100, 101, 105],
     }, index=dates)
     data.columns = pd.MultiIndex.from_tuples(data.columns)
     entry = {
@@ -957,7 +965,7 @@ def test_paper_position_keeps_its_original_cost_assumption(tmp_path):
         "strategy": "low_vol_trend",
         "signal_date": "2026-01-05",
         "entry": 100,
-        "stop": 99,
+        "stop": 95,
         "target": 105,
         "max_hold": 20,
         "news_action": "pass",
@@ -973,6 +981,13 @@ def test_paper_position_keeps_its_original_cost_assumption(tmp_path):
     )
     update_paper_ledger(
         {"created_at": "2026-01-06T22:00:00Z", "entries": [entry]},
+        data.iloc[:2],
+        path=path,
+        cost_bps_per_side=10,
+        cancel_withdrawn=False,
+    )
+    update_paper_ledger(
+        {"created_at": "2026-01-07T22:00:00Z", "entries": [entry]},
         data,
         path=path,
         cost_bps_per_side=100,
@@ -985,12 +1000,12 @@ def test_paper_position_keeps_its_original_cost_assumption(tmp_path):
 
 
 def test_paper_ledger_does_not_assume_fill_bar_target_sequence(tmp_path):
-    dates = pd.date_range("2026-01-05", periods=2, freq="B")
+    dates = pd.date_range("2026-01-05", periods=3, freq="B")
     data = pd.DataFrame({
-        ("Open", "TEST"): [100, 101],
-        ("High", "TEST"): [101, 106],
-        ("Low", "TEST"): [99, 99.5],
-        ("Close", "TEST"): [100, 103],
+        ("Open", "TEST"): [100, 101, 103],
+        ("High", "TEST"): [101, 106, 106],
+        ("Low", "TEST"): [99, 99.5, 100],
+        ("Close", "TEST"): [100, 103, 105],
     }, index=dates)
     data.columns = pd.MultiIndex.from_tuples(data.columns)
     entry = {
@@ -1009,11 +1024,17 @@ def test_paper_ledger_does_not_assume_fill_bar_target_sequence(tmp_path):
     path = tmp_path / "paper.json"
 
     update_paper_ledger({"created_at": "2026-01-05T22:00:00Z", "entries": [entry]}, data.iloc[:1], path=path)
-    summary = update_paper_ledger({"created_at": "2026-01-06T22:00:00Z", "entries": [entry]}, data, path=path)
+    summary = update_paper_ledger({"created_at": "2026-01-06T22:00:00Z", "entries": [entry]}, data.iloc[:2], path=path)
     ledger = json.loads(path.read_text(encoding="utf-8"))
 
     assert summary["closed_trades"] == 0
     assert ledger["positions"][0]["entry_date"] == "2026-01-06"
+    update_paper_ledger({"created_at": "2026-01-07T22:00:00Z", "entries": [entry]}, data, path=path)
+    closed = json.loads(path.read_text(encoding="utf-8"))["closed"][0]
+    assert closed["mark_path"] == [
+        {"date": "2026-01-06", "price": 103.0},
+        {"date": "2026-01-07", "price": 105.0},
+    ]
 
 
 def test_paper_ledger_records_opening_gap_below_stop(tmp_path):
@@ -1123,6 +1144,16 @@ def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):
         cancel_withdrawn=False,
     )
     assert len(json.loads(shadow_path.read_text(encoding="utf-8"))["positions"]) == 1
+    replacement = {**entry, "signal_date": "2026-01-06", "risk_pct": 0.01}
+    update_paper_ledger(
+        {"created_at": "2026-01-06T22:00:00Z", "entries": [replacement]},
+        data,
+        path=shadow_path,
+        cancel_withdrawn=False,
+    )
+    shadow = json.loads(shadow_path.read_text(encoding="utf-8"))
+    assert [row["signal_date"] for row in shadow["positions"]] == ["2026-01-06"]
+    assert shadow["cancelled"][0]["reason"] == "exact shadow plan superseded before fill"
 
 
 def test_actionable_paper_evidence_requires_news_pass(tmp_path):
