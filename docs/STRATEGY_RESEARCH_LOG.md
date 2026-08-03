@@ -1,5 +1,13 @@
 # Strategy Research Log
 
+## 2026-08-03 — Tested runtime dependency reconciliation
+
+- Reproducibility mistake corrected: `requirements.txt` still pinned the pre-merge 2023-era stack, while every current research run and all 84 tests used Python 3.14.3 with Streamlit 1.56.0, pandas 3.0.2, Plotly 6.6.0, yfinance 1.2.0, NumPy 2.4.4, Requests 2.33.1, and pytest 8.3.5.
+- Direct dependencies now match that already-tested runtime exactly. Requests is declared because application code imports it directly instead of relying on yfinance to install it transitively.
+- No package was upgraded during this correction, and no research result, strategy rule, plan identity, holdout, or ledger entry changed.
+
+Decision: reproduce the environment that generated the evidence before considering any dependency upgrade as a separate tested change.
+
 ## 2026-08-03 — First prospective v14 close and evidence visibility
 
 - Real-data monitoring passed for the fixed 20-stock universe plus SPY through 2026-07-31. The run evaluated only frozen `SWING_20D / low_vol_trend`, exposed no holdout, and retained exact Yahoo snapshot `4cc9b64f…e6b172`.
