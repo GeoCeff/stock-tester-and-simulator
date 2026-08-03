@@ -2403,6 +2403,8 @@
       const shadowRows = Object.entries(evidence.shadowPlans).map(([planId, row]) => [
         planId.match(/@([0-9a-f]{12})/)?.[1] || "exact plan",
         row.closed_trades || 0,
+        `${Number(row.symbols || 0)} / 5`,
+        `${Number(row.evidence_span_days || 0)} / 90 days`,
         formatPct(row.expectancy),
         formatNumber(row.profit_factor),
         formatPct(row.positive_symbol_ratio),
@@ -2422,7 +2424,7 @@
           ["Development", development.trades || 0, formatPct(development.expectancy), formatNumber(development.profit_factor), formatPct(development.positive_symbol_ratio), formatPct(development.max_drawdown)],
           ["Internal validation", validation.trades || 0, formatPct(validation.expectancy), formatNumber(validation.profit_factor), formatPct(validation.positive_symbol_ratio), formatPct(validation.max_drawdown)]
         ])}
-        ${shadowRows.length ? `<h3>Prospective shadow evidence</h3>${table(["Plan", "Closes", "Expectancy", "Profit factor", "Positive symbols", "Portfolio drawdown"], shadowRows)}` : ""}
+        ${shadowRows.length ? `<h3>Prospective shadow evidence</h3>${table(["Plan", "Closes", "Symbols", "Closed-outcome span", "Expectancy", "Profit factor", "Positive symbols", "Portfolio drawdown"], shadowRows)}` : ""}
         <div class="health-grid">
           <div class="health-card"><span>Validated common coverage</span><strong>${evidence.coverageLabel} / ${evidence.coverageStart} to ${evidence.coverageEnd}</strong></div>
           <div class="health-card"><span>${evidence.holdoutExposed ? "Exposed final holdout" : "Current protected window"}</span><strong>${evidence.holdout.start || "-"} to ${evidence.holdout.end || "-"} / ${evidence.holdout.rows || 0} rows</strong></div>

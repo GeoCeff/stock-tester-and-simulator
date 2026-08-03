@@ -1,5 +1,14 @@
 # Strategy Research Log
 
+## 2026-08-03 — Prospective evidence clock audit
+
+- Investigated why the first LLY observation reports zero evidence days despite lasting from 2026-07-29 through 2026-07-31.
+- The 90-day qualification gate intentionally measures the span between the earliest and latest closed outcomes for one exact plan, not the duration of its oldest position. One long-lived cohort therefore cannot satisfy temporal diversity; one closed trade correctly has a zero-day closed-outcome span.
+- The live server independently enforces the same integer span of at least 90 days. No qualification logic changed.
+- UI gap corrected: the prospective shadow table now shows exact-plan symbol coverage and closed-outcome span alongside closes, expectancy, profit factor, positive-symbol ratio, and portfolio drawdown. Current v14 progress is visibly 1 close, 1/5 symbols, and 0/90 closed-outcome days.
+
+Decision: retain the stricter outcome-span clock and collect independent closes over time rather than crediting holding duration as diversified evidence.
+
 ## 2026-08-03 — Protected-window semantics audit
 
 - Audited the rolling research split after the displayed window moved from 2025-02-18–2026-07-28 to 2025-02-21–2026-07-31 as new bars arrived.
