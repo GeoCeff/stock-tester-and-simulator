@@ -89,6 +89,7 @@ const evidenceSummary = app.researchEvidence({
   holdout: { id: "held-back" }
 });
 assert.equal(evidenceSummary.executionStatus, "pass");
+assert.equal(evidenceSummary.holdoutExposed, false, "a rolling protected window must not masquerade as an exposed final holdout");
 assert.equal(evidenceSummary.shadowClosed, 1, "shadow evidence should remain visible but separate from qualifying paper evidence");
 assert.equal(evidenceSummary.plan.development.trades, 30, "evidence summary should recover cooldown plan metrics from diagnostics");
 assert(evidenceSummary.nextAction.includes("materially new data"), "protected holdout should name the next valid evidence");

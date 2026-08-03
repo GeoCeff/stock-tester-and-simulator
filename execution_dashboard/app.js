@@ -263,6 +263,7 @@
       strategy: primary.strategy || "low_vol_trend",
       signalStatus,
       executionStatus,
+      holdoutExposed,
       holdoutStatus: holdoutExposed ? primary.acceptance?.status || "exposed" : "protected / not exposed",
       paperStatus: paper.status || "warming_up",
       paperClosed: Number(paper.current_closed_trades || 0),
@@ -2411,7 +2412,7 @@
         <div class="health-grid">
           <div class="health-card"><span>Signal development</span><strong>${evidence.signalStatus}</strong></div>
           <div class="health-card"><span>Execution plan</span><strong>${evidence.executionStatus}</strong></div>
-          <div class="health-card"><span>Final holdout</span><strong>${evidence.holdoutStatus}</strong></div>
+          <div class="health-card"><span>Holdout access</span><strong>${evidence.holdoutStatus}</strong></div>
           <div class="health-card"><span>Paper evidence</span><strong>${evidence.paperClosed} / 30 closes</strong></div>
           <div class="health-card"><span>Shadow observations</span><strong>${evidence.shadowClosed} closed / diagnostic only</strong></div>
           <div class="health-card"><span>Data source</span><strong>${evidence.source}${evidence.isDemo ? " / demo rejected" : " / real"}</strong></div>
@@ -2424,8 +2425,8 @@
         ${shadowRows.length ? `<h3>Prospective shadow evidence</h3>${table(["Plan", "Closes", "Expectancy", "Profit factor", "Positive symbols", "Portfolio drawdown"], shadowRows)}` : ""}
         <div class="health-grid">
           <div class="health-card"><span>Validated common coverage</span><strong>${evidence.coverageLabel} / ${evidence.coverageStart} to ${evidence.coverageEnd}</strong></div>
-          <div class="health-card"><span>Reserved final holdout</span><strong>${evidence.holdout.start || "-"} to ${evidence.holdout.end || "-"} / ${evidence.holdout.rows || 0} rows</strong></div>
-          <div class="health-card"><span>Holdout ID</span><strong>${evidence.holdout.id || "unavailable"}</strong></div>
+          <div class="health-card"><span>${evidence.holdoutExposed ? "Exposed final holdout" : "Current protected window"}</span><strong>${evidence.holdout.start || "-"} to ${evidence.holdout.end || "-"} / ${evidence.holdout.rows || 0} rows</strong></div>
+          <div class="health-card"><span>${evidence.holdoutExposed ? "Holdout ID" : "Window ID"}</span><strong>${evidence.holdout.id || "unavailable"}</strong></div>
           <div class="health-card"><span>Next valid action</span><strong>${evidence.nextAction}</strong></div>
         </div>
       `;

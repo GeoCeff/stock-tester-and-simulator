@@ -1,5 +1,13 @@
 # Strategy Research Log
 
+## 2026-08-03 — Protected-window semantics audit
+
+- Audited the rolling research split after the displayed window moved from 2025-02-18–2026-07-28 to 2025-02-21–2026-07-31 as new bars arrived.
+- No leakage found: when `low_vol_trend` is excluded from another holdout trial, all signal and exact-plan diagnostics receive only rows strictly before the current protected-window start. The window may roll because it has not been authorized or frozen as a new final trial.
+- UI wording mistake corrected: Evidence called the rolling quarantine a “Reserved final holdout” and its fingerprint a “Holdout ID.” It now says “Current protected window” and “Window ID” until an actual final holdout is exposed; holdout access remains visibly `protected / not exposed`.
+
+Decision: keep the split logic unchanged. Freeze and label a final holdout only when a separately predeclared trial is authorized on materially new data.
+
 ## 2026-08-03 — Tested runtime dependency reconciliation
 
 - Reproducibility mistake corrected: `requirements.txt` still pinned the pre-merge 2023-era stack, while every current research run and all 84 tests used Python 3.14.3 with Streamlit 1.56.0, pandas 3.0.2, Plotly 6.6.0, yfinance 1.2.0, NumPy 2.4.4, Requests 2.33.1, and pytest 8.3.5.
