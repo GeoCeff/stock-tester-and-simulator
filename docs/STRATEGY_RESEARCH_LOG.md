@@ -1,5 +1,13 @@
 # Strategy Research Log
 
+## 2026-08-03 — Provider-client provenance
+
+- Reproducibility gap corrected: artifacts recorded exact OHLC hashes plus pandas and NumPy versions, but not the data client responsible for Yahoo adjustment behavior or Stooq retrieval.
+- New provenance records now include the active client and installed version (`yfinance` for Yahoo, `requests` for Stooq) using Python’s standard package metadata. Evidence displays the value and labels older artifacts `unrecorded` instead of guessing.
+- No provider, package, price, strategy rule, gate, holdout, or ledger state changed. A non-mutating real-data preflight is sufficient to verify the new metadata; another same-day research evaluation is unnecessary.
+
+Decision: make provider behavior traceable without treating client version changes as market evidence.
+
 ## 2026-08-03 — Prospective evidence clock audit
 
 - Investigated why the first LLY observation reports zero evidence days despite lasting from 2026-07-29 through 2026-07-31.

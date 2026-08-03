@@ -270,6 +270,7 @@
       shadowClosed: Number(shadow.current_closed_trades || 0),
       shadowPlans: shadow.by_plan || {},
       source: provenance.source || "unavailable",
+      providerClient: provenance.provider_client || "unrecorded",
       isDemo: provenance.is_demo === true,
       datasetHash: provenance.dataset_sha256 || "",
       coverageLabel: coverage.length === 21 ? "20 stocks + SPY" : `${coverage.length} symbols`,
@@ -2418,6 +2419,7 @@
           <div class="health-card"><span>Paper evidence</span><strong>${evidence.paperClosed} / 30 closes</strong></div>
           <div class="health-card"><span>Shadow observations</span><strong>${evidence.shadowClosed} closed / diagnostic only</strong></div>
           <div class="health-card"><span>Data source</span><strong>${evidence.source}${evidence.isDemo ? " / demo rejected" : " / real"}</strong></div>
+          <div class="health-card"><span>Provider client</span><strong>${evidence.providerClient}</strong></div>
           <div class="health-card"><span>Dataset fingerprint</span><strong>${evidence.datasetHash.slice(0, 12) || "unavailable"}</strong></div>
         </div>
         ${table(["Exact plan", "Trades", "Expectancy", "Profit factor", "Positive symbols", "Max drawdown"], [

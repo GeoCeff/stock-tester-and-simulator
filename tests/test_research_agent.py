@@ -172,6 +172,7 @@ def test_research_data_provenance_fingerprints_exact_ohlc_values():
     changed.loc[index[-1], ("Close", "TEST")] = 102
 
     assert first["dataset_sha256"] == second["dataset_sha256"]
+    assert first["provider_client"] == "yfinance 1.2.0"
     assert first["dataset_sha256"] != research_runner.research_data_provenance(
         changed, status, ["TEST", "SPY"]
     )["dataset_sha256"]

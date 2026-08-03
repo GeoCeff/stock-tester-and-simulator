@@ -11,6 +11,7 @@ import tempfile
 import time
 import zipfile
 from datetime import datetime, time as clock_time, timedelta, timezone
+from importlib.metadata import version as package_version
 from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -84,6 +85,10 @@ def _canonical_ohlc_csv(data, symbol):
 
 def research_data_provenance(data, status, symbols):
     """Describe and fingerprint the exact validated OHLC snapshot used by a run."""
+    provider_package = {
+        DATA_SOURCE_YAHOO: "yfinance",
+        DATA_SOURCE_STOOQ: "requests",
+    }.get(status.get("source"))
     digest = hashlib.sha256()
     coverage = {}
     for symbol in sorted(symbols):
@@ -112,6 +117,7 @@ def research_data_provenance(data, status, symbols):
         },
         "dataset_sha256": digest.hexdigest(),
         "coverage": coverage,
+        "provider_client": f"{provider_package} {package_version(provider_package)}" if provider_package else "unavailable",
         "pandas_version": pd.__version__,
         "numpy_version": np.__version__,
     }

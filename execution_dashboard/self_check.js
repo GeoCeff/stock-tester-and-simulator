@@ -85,10 +85,11 @@ const evidenceSummary = app.researchEvidence({
   development_diagnostics: [{ style: "SWING_20D", strategy: "low_vol_trend", signal_status: "pass", execution_status: "pass", execution_plan: { development: { trades: 30 } } }],
   paper_evidence: { status: "warming_up", current_closed_trades: 0 },
   shadow_evidence: { status: "warming_up", current_closed_trades: 1, by_plan: { "exact-plan": { closed_trades: 1, symbols: 1, evidence_span_days: 0, expectancy: -0.05 } } },
-  data_provenance: { source: "Yahoo Finance", is_demo: false, dataset_sha256: "abc123", coverage: { AAPL: { first: "2020-01-01", last: "2026-07-28" } } },
+  data_provenance: { source: "Yahoo Finance", provider_client: "yfinance 1.2.0", is_demo: false, dataset_sha256: "abc123", coverage: { AAPL: { first: "2020-01-01", last: "2026-07-28" } } },
   holdout: { id: "held-back" }
 });
 assert.equal(evidenceSummary.executionStatus, "pass");
+assert.equal(evidenceSummary.providerClient, "yfinance 1.2.0");
 assert.equal(evidenceSummary.holdoutExposed, false, "a rolling protected window must not masquerade as an exposed final holdout");
 assert.equal(evidenceSummary.shadowClosed, 1, "shadow evidence should remain visible but separate from qualifying paper evidence");
 assert.equal(evidenceSummary.plan.development.trades, 30, "evidence summary should recover cooldown plan metrics from diagnostics");
