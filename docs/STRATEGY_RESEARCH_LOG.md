@@ -1,5 +1,17 @@
 # Strategy Research Log
 
+## 2026-08-03 — First prospective v14 close and evidence visibility
+
+- Real-data monitoring passed for the fixed 20-stock universe plus SPY through 2026-07-31. The run evaluated only frozen `SWING_20D / low_vol_trend`, exposed no holdout, and retained exact Yahoo snapshot `4cc9b64f…e6b172`.
+- Exact-plan development remained positive across 583 trades (1.61% expectancy, 1.46 profit factor, 80% positive symbols, −5.58% portfolio drawdown). Internal validation remained positive across 210 trades (1.11% expectancy, 1.52 profit factor, 70% positive symbols, −4.40% drawdown). These are historical diagnostics, not live qualification.
+- The first genuinely prospective v14 observation was negative: LLY filled at $1,215.18 on 2026-07-29 and hit its predeclared $1,135.119 stop on 2026-07-31. Net trade return was −6.7884%; fixed 1/20 portfolio allocation limited measured portfolio drawdown to −0.3394%.
+- Actionable exact-plan paper evidence remains 0/30. Shadow evidence is separately 1 closed trade across one symbol and zero elapsed evidence days; it cannot satisfy any live gate. A fresh LLY shadow limit from the unchanged plan is pending from the 2026-07-31 signal. Legacy v2 JPM/UNH positions remain diagnostic-only.
+- UI mistake corrected: the Evidence view showed 0/30 qualifying paper closes but hid the separate shadow outcome. Trade-desk summaries and Evidence now disclose the shadow count, status, expectancy, profit factor, symbol consistency, and portfolio drawdown without mixing it into qualification.
+- Provider limitation recorded: repeated Yahoo `auto_adjust` downloads with identical coverage produced different exact hashes because sub-cent adjustment values shifted across nearly every historical row (maximum relative difference under roughly one part per million). Exact snapshots preserve every run for audit. The research data was not rounded or otherwise changed after observing the result.
+- Verification: dashboard self-check passed, all 84 Python tests passed, and desktop plus 375px browser QA found no console errors or page-level horizontal overflow; the wide evidence table scrolls locally.
+
+Decision: keep the strategy and gates frozen. Treat the stopped LLY trade as negative evidence and continue collecting genuinely future exact-plan observations.
+
 ## 2026-07-29 — Reproducible point-in-time input snapshots
 
 - Evidence gap corrected: research records retained a deterministic OHLC hash and coverage metadata, but not the exact provider bytes needed to reproduce a run after adjusted history changes.

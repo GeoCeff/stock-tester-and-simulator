@@ -241,6 +241,7 @@
       development_validation: rawPlan.development_validation || rawPlan.final || {}
     };
     const paper = agent?.paper_evidence || {};
+    const shadow = agent?.shadow_evidence || {};
     const provenance = agent?.data_provenance || {};
     const coverage = Object.values(provenance.coverage || {});
     const holdoutExposed = primary.metrics?.holdout_exposed === true;
@@ -265,6 +266,8 @@
       holdoutStatus: holdoutExposed ? primary.acceptance?.status || "exposed" : "protected / not exposed",
       paperStatus: paper.status || "warming_up",
       paperClosed: Number(paper.current_closed_trades || 0),
+      shadowClosed: Number(shadow.current_closed_trades || 0),
+      shadowPlans: shadow.by_plan || {},
       source: provenance.source || "unavailable",
       isDemo: provenance.is_demo === true,
       datasetHash: provenance.dataset_sha256 || "",
@@ -1388,7 +1391,7 @@
 
     const evidence = researchEvidence(state.researchAgent);
     document.getElementById("summary-primary-strategy").textContent = `${evidence.strategy} / rules frozen`;
-    document.getElementById("summary-evidence").textContent = `${evidence.paperStatus} / ${evidence.paperClosed} of 30 closes`;
+    document.getElementById("summary-evidence").textContent = `${evidence.paperStatus} / ${evidence.paperClosed} of 30 paper closes • ${evidence.shadowClosed} shadow`;
     document.getElementById("summary-universe").textContent = `${state.universe.length} liquid stocks / no cherry-picking`;
     document.getElementById("summary-next-action").textContent = evidence.nextAction;
   }
@@ -1408,7 +1411,7 @@
       title.textContent = "No setup is ready";
       trade.textContent = evidence.nextAction;
       numbers.innerHTML = "";
-      actions.textContent = `Research gate: ${evidence.holdoutStatus}; paper ${evidence.paperClosed}/30.`;
+      actions.textContent = `Research gate: ${evidence.holdoutStatus}; paper ${evidence.paperClosed}/30; shadow ${evidence.shadowClosed} closed.`;
       return;
     }
 
@@ -2396,12 +2399,21 @@
       const evidence = researchEvidence(state.researchAgent);
       const development = evidence.plan.development || {};
       const validation = evidence.plan.development_validation || {};
+      const shadowRows = Object.entries(evidence.shadowPlans).map(([planId, row]) => [
+        planId.match(/@([0-9a-f]{12})/)?.[1] || "exact plan",
+        row.closed_trades || 0,
+        formatPct(row.expectancy),
+        formatNumber(row.profit_factor),
+        formatPct(row.positive_symbol_ratio),
+        formatPct(row.max_drawdown)
+      ]);
       target.innerHTML = `
         <div class="health-grid">
           <div class="health-card"><span>Signal development</span><strong>${evidence.signalStatus}</strong></div>
           <div class="health-card"><span>Execution plan</span><strong>${evidence.executionStatus}</strong></div>
           <div class="health-card"><span>Final holdout</span><strong>${evidence.holdoutStatus}</strong></div>
           <div class="health-card"><span>Paper evidence</span><strong>${evidence.paperClosed} / 30 closes</strong></div>
+          <div class="health-card"><span>Shadow observations</span><strong>${evidence.shadowClosed} closed / diagnostic only</strong></div>
           <div class="health-card"><span>Data source</span><strong>${evidence.source}${evidence.isDemo ? " / demo rejected" : " / real"}</strong></div>
           <div class="health-card"><span>Dataset fingerprint</span><strong>${evidence.datasetHash.slice(0, 12) || "unavailable"}</strong></div>
         </div>
@@ -2409,6 +2421,7 @@
           ["Development", development.trades || 0, formatPct(development.expectancy), formatNumber(development.profit_factor), formatPct(development.positive_symbol_ratio), formatPct(development.max_drawdown)],
           ["Internal validation", validation.trades || 0, formatPct(validation.expectancy), formatNumber(validation.profit_factor), formatPct(validation.positive_symbol_ratio), formatPct(validation.max_drawdown)]
         ])}
+        ${shadowRows.length ? `<h3>Prospective shadow evidence</h3>${table(["Plan", "Closes", "Expectancy", "Profit factor", "Positive symbols", "Portfolio drawdown"], shadowRows)}` : ""}
         <div class="health-grid">
           <div class="health-card"><span>Validated common coverage</span><strong>${evidence.coverageLabel} / ${evidence.coverageStart} to ${evidence.coverageEnd}</strong></div>
           <div class="health-card"><span>Reserved final holdout</span><strong>${evidence.holdout.start || "-"} to ${evidence.holdout.end || "-"} / ${evidence.holdout.rows || 0} rows</strong></div>
