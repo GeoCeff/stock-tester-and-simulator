@@ -26,6 +26,17 @@ const research = app.buildResearchSnapshot(rows, ["AAPL", "NVDA"]);
 assert.equal(research.research_version, "ai-research-v1");
 assert(research.symbols.AAPL.technical.sma50 > 0, "research snapshot should include SMA50");
 assert(["pass", "reduce", "reject"].includes(research.symbols.AAPL.action), "research action should gate setups");
+const contextPanel = app.researchPanelContent({ symbol: "AAPL", style: "SWING_20D" }, research.symbols.AAPL, null);
+assert.equal(contextPanel.label, "Context veto");
+assert.equal(contextPanel.action, research.symbols.AAPL.action === "pass" ? "clear" : research.symbols.AAPL.action);
+assert(contextPanel.summary.includes("not a trade approval"), "local context must not look like trade authorization");
+const candidatePanel = app.researchPanelContent(
+  { symbol: "AAPL", style: "SWING_20D" },
+  research.symbols.AAPL,
+  { news_action: "reduce" }
+);
+assert.equal(candidatePanel.label, "News gate");
+assert.equal(candidatePanel.action, "reduce", "an exact candidate must show its embedded news gate");
 const graph = app.learningGraph([
   { pnl: 10, returnPct: 0.01, learningNodes: ["style:SWING_5D", "regime:BULLISH"] },
   { pnl: -5, returnPct: -0.01, learningNodes: ["style:SWING_5D", "regime:BEARISH"] }

@@ -229,6 +229,24 @@
     return state.researchSnapshot?.symbols?.[String(symbol || "").toUpperCase()] || null;
   }
 
+  function researchPanelContent(setup, row, candidate) {
+    if (!setup) return { title: "Market context", summary: "No selected setup.", label: "Context veto", action: "unavailable" };
+    if (candidate) {
+      return {
+        title: `Candidate news gate: ${setup.symbol}`,
+        summary: `Exact-plan news gate is ${candidate.news_action || "unavailable"}. Technical context does not authorize an order.`,
+        label: "News gate",
+        action: candidate.news_action || "unavailable"
+      };
+    }
+    return {
+      title: `Market context: ${setup.symbol}`,
+      summary: `${row?.ai_view || "Market context unavailable."} Technical/news context only — not a trade approval.`,
+      label: "Context veto",
+      action: row?.action === "pass" ? "clear" : row?.action || "unavailable"
+    };
+  }
+
   function researchEvidence(agent) {
     const primary = agent?.styles?.SWING_20D || {};
     const diagnostic = agent?.development_diagnostics?.find((row) => (
@@ -1233,7 +1251,7 @@
       }
       state.analysis = analyze(state.data, state.universe);
       selectBotPick();
-      if (!silent) state.journal.unshift(journalLine(`AI research refreshed for ${Object.keys(state.researchSnapshot.symbols || {}).length} symbol(s)`, "Research"));
+      if (!silent) state.journal.unshift(journalLine(`Market context refreshed for ${Object.keys(state.researchSnapshot.symbols || {}).length} symbol(s)`, "Research"));
     } finally {
       state.researchInFlight = false;
     }
@@ -1438,6 +1456,8 @@
   function renderResearchPanel() {
     const setup = selectedSetup() || bestReadySetup();
     const row = setup ? researchForSymbol(setup.symbol) : null;
+    const candidate = setup ? researchAgentCandidate(setup.symbol, setup.style) : null;
+    const content = researchPanelContent(setup, row, candidate);
     const technical = row?.technical || {};
     const modelStatus = document.getElementById("model-status");
     const title = document.getElementById("research-title");
@@ -1447,19 +1467,19 @@
     if (!modelStatus || !title || !summary || !numbers || !button) return;
     modelStatus.textContent = `Model: ${modelPackLabel(setup)} / GPT: ${state.openAiEnabled ? state.openAiModel : "off"}`;
     button.disabled = state.researchInFlight;
-    button.textContent = state.researchInFlight ? "Refreshing" : "Refresh Research";
+    button.textContent = state.researchInFlight ? "Refreshing" : "Refresh Context";
     if (!setup) {
-      title.textContent = "AI research";
-      summary.textContent = "No selected setup.";
+      title.textContent = content.title;
+      summary.textContent = content.summary;
       numbers.innerHTML = "";
       return;
     }
     const age = Number.isFinite(researchAgeMinutes()) ? `${Math.round(researchAgeMinutes())}m old` : "not refreshed";
     const newsStatus = row?.news_status === "ok" ? `${row.news.length} headline(s)` : "news unavailable";
-    title.textContent = `AI research: ${setup.symbol}`;
-    summary.textContent = row?.ai_view || "Research snapshot unavailable; live orders stay gated.";
+    title.textContent = content.title;
+    summary.textContent = content.summary;
     numbers.innerHTML = [
-      decisionKpi("Action", row?.action || "reduce"),
+      decisionKpi(content.label, content.action),
       decisionKpi("RSI14", formatNumber(technical.rsi14, 1)),
       decisionKpi("SMA50", formatMoney(technical.sma50)),
       decisionKpi("Rel 20D", formatPct(technical.relative_20d)),
@@ -1938,7 +1958,7 @@
       ["Model version", MODEL_VERSION],
       ["Feature set", "price-volume-regime-v2"],
       ["Model pack", modelPackLabel(selectedSetup())],
-      ["AI research", state.researchSnapshot ? `${RESEARCH_VERSION} / ${Math.round(researchAgeMinutes())}m old` : "not refreshed"],
+      ["Market context", state.researchSnapshot ? `${RESEARCH_VERSION} / ${Math.round(researchAgeMinutes())}m old` : "not refreshed"],
       ["OpenAI API", state.openAiEnabled ? state.openAiModel : "off"],
       ["Universe", state.universe.join(", ")],
       ["Replay samples", replay.reduce((sum, row) => sum + row.count, 0)],
@@ -2192,7 +2212,7 @@
       const quoteReason = quoteFreshnessReason(setup.symbol);
       if (quoteReason) reasons.push(quoteReason);
       if (state.modelPack && modelPackAgeDays() > MODEL_PACK_MAX_AGE_DAYS) reasons.push("model pack stale");
-      if (!researchForSymbol(setup.symbol) || researchAgeMinutes() > RESEARCH_MAX_AGE_MINUTES) reasons.push("AI research stale");
+      if (!researchForSymbol(setup.symbol) || researchAgeMinutes() > RESEARCH_MAX_AGE_MINUTES) reasons.push("market context stale");
       const warmup = paperFirstReason(setup);
       if (warmup) reasons.push(warmup);
     }
@@ -2519,7 +2539,7 @@
     } else if (state.activeTab === "research") {
       target.innerHTML = researchRows().length
         ? table(["Symbol", "Action", "Price", "SMA50", "SMA200", "RSI14", "Rel 20D", "News", "Reasons"], researchRows())
-        : `<div class="empty">No AI research snapshot yet.</div>`;
+        : `<div class="empty">No market context snapshot yet.</div>`;
     } else if (state.activeTab === "exposure") {
       target.innerHTML = `${table(["Symbol", "Sector", "Volatility", "Avg corr", "Drawdown"], exposureRows())}${table(["Symbol", "Last", "Bid", "Ask", "Spread", "Quote time", "Age"], quoteQualityRows())}${table(["Symbol", "Style", "Expected fill", "Actual fill", "Slippage"], slippageRows())}`;
     } else if (state.activeTab === "ibkr") {
@@ -3181,6 +3201,7 @@
     setupLearningNodes,
     tradeFeatures,
     researchEvidence,
+    researchPanelContent,
     formatPct,
     formatMoney
   };
