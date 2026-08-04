@@ -1108,7 +1108,7 @@ def test_paper_ledger_does_not_overlap_persistent_signal(tmp_path):
     data = pd.DataFrame({
         ("Open", "TEST"): [100, 102],
         ("High", "TEST"): [101, 103],
-        ("Low", "TEST"): [99, 101],
+        ("Low", "TEST"): [99, 99],
         ("Close", "TEST"): [100, 102],
     }, index=dates)
     data.columns = pd.MultiIndex.from_tuples(data.columns)
@@ -1136,6 +1136,15 @@ def test_paper_ledger_does_not_overlap_persistent_signal(tmp_path):
     positions = json.loads(path.read_text(encoding="utf-8"))["positions"]
     assert len(positions) == 1
     assert positions[0]["signal_date"] == "2026-01-05"
+
+    update_paper_ledger(
+        {"created_at": "2026-01-06T23:00:00Z", "entries": [{**entry, "signal_date": "2026-01-06", "risk_pct": 0.01}]},
+        data,
+        path=path,
+    )
+    positions = json.loads(path.read_text(encoding="utf-8"))["positions"]
+    assert len(positions) == 2
+    assert len({row["plan_id"] for row in positions}) == 2
 
 
 def test_paper_ledger_cancels_withdrawn_unfilled_signal(tmp_path):

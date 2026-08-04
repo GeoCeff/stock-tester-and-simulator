@@ -771,7 +771,10 @@ def update_paper_ledger(result, data, *, path=None, cost_bps_per_side=10, cancel
                     matching[0][field] = entry[field]
         elif (
             key not in existing
-            and not any((row["symbol"], row["style"]) == key[:2] for row in still_open)
+            and not any(
+                (row["symbol"], row["style"], row.get("plan_id")) == (*key[:2], entry["plan_id"])
+                for row in still_open
+            )
             and (not cancel_withdrawn or entry.get("news_action") == "pass")
         ):
             still_open.append({

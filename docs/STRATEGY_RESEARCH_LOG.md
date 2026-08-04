@@ -1,5 +1,16 @@
 # Strategy Research Log
 
+## 2026-08-04 — Independent exact-plan evidence lanes
+
+- Real-data preflight advanced the fixed 20-stock universe plus SPY from 2026-07-31 through the completed 2026-08-03 session. The unchanged frozen `SWING_20D / low_vol_trend` run used Yahoo data, retained snapshot `ccfb1aa9c…c344f`, exposed no final holdout, published no actionable entries, and left paper evidence at 0/30.
+- Development diagnostics remained positive across 586 trades (1.62% expectancy, 1.51 profit factor, 80% positive symbols, −5.21% drawdown); internal validation remained positive across 215 trades (0.99% expectancy, 1.45 profit factor, 70% positive symbols, −4.09% drawdown). These are historical diagnostics only.
+- Mistake found: one mixed open-position set prevented a current exact plan from recording a symbol whenever a legacy plan still held that symbol. This contaminated prospective lane coverage even though acceptance is calculated independently by exact `plan_id`.
+- The overlap rule now blocks duplicate symbol/style exposure only within the same exact plan. Filled legacy positions remain preserved and independently marked, while they no longer suppress newer registered lanes. The methodological change correctly starts plan `31c5d79e6a7a`; prior `de10a7fa9169` evidence remains diagnostic and is not relabeled.
+- The new lane begins with pending LLY and UNH shadow limits dated 2026-08-03. It has 0 closes, 0 symbols with closed outcomes, and 0 evidence days. Live execution remains blocked.
+- Verification: focused research-ledger tests passed, all 84 Python tests passed, and the dashboard self-check passed.
+
+Decision: keep all signal, execution, cost, universe, news, holdout, and live gates frozen; collect genuinely future bars separately for the new exact-plan lane.
+
 ## 2026-08-03 — Provider-client provenance
 
 - Reproducibility gap corrected: artifacts recorded exact OHLC hashes plus pandas and NumPy versions, but not the data client responsible for Yahoo adjustment behavior or Stooq retrieval.
