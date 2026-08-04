@@ -7,6 +7,10 @@ const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, acquireLiveOrderLock,
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
 
+assert.equal(app.formatMoney(undefined), "-", "missing money must not masquerade as zero");
+assert.equal(app.formatMoney(0), "$0.00", "real zero money should remain visible");
+assert.equal(app.formatPct(undefined), "-", "missing percentages must not masquerade as zero");
+assert.equal(app.formatPct(0), "0.00%", "real zero percentages should remain visible");
 assert.equal(app.DEFAULT_UNIVERSE.length, 20, "default research universe should be diversified");
 assert(app.DEFAULT_UNIVERSE.every((symbol) => NEWS_TERMS[symbol]?.length), "every default symbol needs company news terms");
 assert(rows.length > 1000, "sample data should include multiple symbols");

@@ -75,11 +75,15 @@
   }
 
   function formatMoney(value) {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value || 0);
+    const number = Number(value);
+    return value == null || value === "" || !Number.isFinite(number)
+      ? "-"
+      : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(number);
   }
 
   function formatPct(value, digits = 2) {
-    return `${((value || 0) * 100).toFixed(digits)}%`;
+    const number = Number(value);
+    return value == null || value === "" || !Number.isFinite(number) ? "-" : `${(number * 100).toFixed(digits)}%`;
   }
 
   function formatNumber(value, digits = 2) {
