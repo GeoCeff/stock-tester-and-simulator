@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const app = require("./app.js");
-const { NEWS_TERMS, validateLiveOrders, validateAutoOrder, acquireLiveOrderLock, releaseLiveOrderLock, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
+const { NEWS_TERMS, validateLocalRequest, validateLiveOrders, validateAutoOrder, acquireLiveOrderLock, releaseLiveOrderLock, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, mergeNews, conservativeAiAction, agentNewsSnapshot, ibkrDiagnosis, ibkrStatusConnected } = require("./server.js");
 
 const rows = app.generateSampleData(new Date("2026-06-19"), 260);
 const analysis = app.analyze(rows);
@@ -13,6 +13,10 @@ assert.equal(app.formatPct(undefined), "-", "missing percentages must not masque
 assert.equal(app.formatPct(0), "0.00%", "real zero percentages should remain visible");
 assert.equal(app.DEFAULT_UNIVERSE.length, 20, "default research universe should be diversified");
 assert(app.DEFAULT_UNIVERSE.every((symbol) => NEWS_TERMS[symbol]?.length), "every default symbol needs company news terms");
+assert.equal(validateLocalRequest({ headers: { host: "127.0.0.1:8787" } }).ok, true);
+assert.equal(validateLocalRequest({ headers: { host: "localhost:8787", origin: "http://localhost:8787" } }).ok, true);
+assert.equal(validateLocalRequest({ headers: { host: "evil.example:8787" } }).ok, false);
+assert.equal(validateLocalRequest({ headers: { host: "127.0.0.1:8787", origin: "null" } }).ok, false);
 assert(rows.length > 1000, "sample data should include multiple symbols");
 assert(analysis.metrics.length >= 5, "analysis should rank stocks");
 assert(["BULLISH", "NEUTRAL", "BEARISH", "PANIC"].includes(analysis.regime.regime), "regime should be classified");

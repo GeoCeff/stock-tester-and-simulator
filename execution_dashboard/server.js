@@ -72,15 +72,20 @@ const STOP_ORDER_TYPES = new Set(["STP", "STOP", "STP LMT", "STOP_LIMIT"]);
 const TIFS = new Set(["DAY", "GTC", "IOC"]);
 const MODEL_PACK_STYLES = new Set(["DAY_TRADE", "OVERNIGHT_1D", "SWING_5D", "SWING_20D"]);
 const RESEARCH_DATA_SOURCES = new Set(["Yahoo Finance", "Stooq"]);
+const LOCAL_HOSTS = new Set([`${HOST}:${PORT}`, `localhost:${PORT}`]);
+const LOCAL_ORIGINS = new Set([`http://${HOST}:${PORT}`, `http://localhost:${PORT}`]);
 
 function send(res, status, body, type = "application/json; charset=utf-8") {
-  res.writeHead(status, {
-    "content-type": type,
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type"
-  });
+  res.writeHead(status, { "content-type": type });
   res.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body));
+}
+
+function validateLocalRequest(req) {
+  const host = String(req?.headers?.host || "").toLowerCase();
+  const origin = req?.headers?.origin;
+  if (!LOCAL_HOSTS.has(host)) return { ok: false, error: "local Host header required" };
+  if (origin && !LOCAL_ORIGINS.has(String(origin).toLowerCase())) return { ok: false, error: "foreign Origin rejected" };
+  return { ok: true };
 }
 
 function readJson(req) {
@@ -1140,9 +1145,11 @@ function serveStatic(req, res, url) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === "OPTIONS") return send(res, 204, "");
-  const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    const trust = validateLocalRequest(req);
+    if (!trust.ok) return send(res, 403, trust);
+    if (req.method !== "GET" && req.method !== "POST") return send(res, 405, { ok: false, error: "method not allowed" });
+    const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname.startsWith("/api/")) return await handleApi(req, res, url);
     return serveStatic(req, res, url);
   } catch (error) {
@@ -1166,4 +1173,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { NEWS_TERMS, validateLiveOrders, validateAutoOrder, acquireLiveOrderLock, releaseLiveOrderLock, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
+module.exports = { NEWS_TERMS, validateLocalRequest, validateLiveOrders, validateAutoOrder, acquireLiveOrderLock, releaseLiveOrderLock, validateModelPack, validateResearchAgent, validateResearchOrder, ibkrNetLiquidation, validateBrokerRisk, validateResearchContract, canonicalResearchOrders, validateIbkrOrderAcknowledgement, parseRssItems, filterRelevantNews, newsSentiment, mergeNews, conservativeAiAction, agentNewsSnapshot, executionHistory, ibkrDiagnosis, ibkrStatusConnected };
