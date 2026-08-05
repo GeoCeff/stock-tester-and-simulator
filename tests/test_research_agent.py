@@ -156,6 +156,22 @@ def test_research_end_date_excludes_an_open_new_york_session():
     assert str(research_runner.research_end_date(after_close)) == "2026-07-30"
 
 
+def test_research_requires_new_common_completed_session(tmp_path):
+    path = tmp_path / "agent.json"
+    path.write_text(json.dumps({
+        "data_provenance": {"coverage": {
+            "TEST": {"last": "2026-08-03"},
+            "SPY": {"last": "2026-08-03"},
+        }}
+    }), encoding="utf-8")
+
+    unchanged = {"coverage": {"TEST": {"last": "2026-08-04"}, "SPY": {"last": "2026-08-03"}}}
+    advanced = {"coverage": {"TEST": {"last": "2026-08-04"}, "SPY": {"last": "2026-08-04"}}}
+
+    assert research_runner.has_new_common_bar(unchanged, path) is False
+    assert research_runner.has_new_common_bar(advanced, path) is True
+
+
 def test_research_data_provenance_fingerprints_exact_ohlc_values():
     index = pd.date_range("2026-01-05", periods=2, freq="B")
     data = pd.DataFrame({

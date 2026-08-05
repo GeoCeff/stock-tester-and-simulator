@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from market_dashboard.modules.data import DATA_SOURCE_AUTO, DATA_SOURCE_STOOQ, DATA_SOURCE_YAHOO, get_ticker_frame, load_market_data
-from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, DEFAULT_CANDIDATES, DEFAULT_SHADOW_LEDGER_PATH, append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
+from market_dashboard.modules.research_agent import BENCHMARK_SYMBOL, DEFAULT_AGENT_RESULT_PATH, DEFAULT_CANDIDATES, DEFAULT_SHADOW_LEDGER_PATH, append_research_history, publish_research_result, recent_rejected_holdout_trials, run_research_loop, update_paper_ledger
 
 
 DEFAULT_UNIVERSE = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,TSLA,JPM,BAC,XOM,CVX,LLY,JNJ,PFE,UNH,WMT,COST,HD,PG"
@@ -198,6 +198,20 @@ def acquire_watch_lock(path=WATCH_LOCK_PATH):
     return handle
 
 
+def has_new_common_bar(provenance, path=DEFAULT_AGENT_RESULT_PATH):
+    """Return true only when the fixed universe has newer common coverage."""
+    coverage = provenance.get("coverage", {})
+    if not coverage:
+        return True
+    try:
+        previous = json.loads(Path(path).read_text(encoding="utf-8"))["data_provenance"]["coverage"]
+        if set(previous) != set(coverage):
+            return True
+        return min(row["last"] for row in coverage.values()) > min(row["last"] for row in previous.values())
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return True
+
+
 def refresh_news():
     try:
         result = subprocess.run(
@@ -279,6 +293,9 @@ def run_once(args):
     if getattr(args, "preflight_only", False):
         print(json.dumps(provenance, indent=2, sort_keys=True))
         return {"status": "preflight_only", "data_provenance": provenance}
+    if not has_new_common_bar(provenance):
+        print("No newer common completed-session coverage; evidence unchanged.")
+        return {"status": "unchanged_data", "data_provenance": provenance}
     provenance = persist_research_snapshot(data, [*universe, BENCHMARK_SYMBOL], provenance)
 
     result = run_research_loop(
@@ -332,9 +349,9 @@ def main():
     args = parser.parse_args()
     if args.watch_minutes < 0:
         parser.error("--watch-minutes cannot be negative")
-    watch_lock = acquire_watch_lock() if args.watch_minutes > 0 else None
-    if args.watch_minutes > 0 and watch_lock is None:
-        print("Research watcher already running; duplicate exited.")
+    watch_lock = acquire_watch_lock()
+    if watch_lock is None:
+        print("Research agent already running; duplicate exited.")
         return
 
     while True:
