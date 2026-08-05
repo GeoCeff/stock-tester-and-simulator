@@ -28,6 +28,7 @@ const PAPER_MIN_SPAN_DAYS = 90;
 const MAX_DAILY_LOSS_PCT = 0.02;
 const MAX_SPREAD_BPS = 20;
 const MAX_RESEARCH_RISK_PCT = 0.01;
+const MAX_POSITION_WEIGHT = 0.05;
 let liveOrderInFlight = false;
 const NEWS_RSS_URL = process.env.NEWS_RSS_URL || "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US";
 const NEWS_DISABLED = process.env.DISABLE_NEWS_FETCH === "1";
@@ -545,7 +546,7 @@ function validateModelPack(pack) {
       return { ok: false, error: `invalid symbol override: ${symbol}` };
     }
     const weight = override.maxPositionWeight ?? override.max_position_weight;
-    if (weight !== undefined && (!Number.isFinite(Number(weight)) || Number(weight) < 0 || Number(weight) > 0.1)) {
+    if (weight !== undefined && (!Number.isFinite(Number(weight)) || Number(weight) < 0 || Number(weight) > MAX_POSITION_WEIGHT)) {
       return { ok: false, error: `${symbol}.max_position_weight out of range` };
     }
     for (const flag of ["blocked", "enabled"]) {
@@ -707,9 +708,15 @@ function validateResearchOrder(body, agent, modelPack, accountEquity, now = Date
   }
   const equity = Number(accountEquity);
   const quantity = Number(entry.quantity);
+  const override = modelPack.symbol_overrides?.[symbol] ?? modelPack.symbolOverrides?.[symbol];
+  const maxPositionWeight = Number(override?.maxPositionWeight ?? override?.max_position_weight ?? MAX_POSITION_WEIGHT);
+  const positionValue = quantity * Number(candidate.entry);
   const stopRisk = quantity * (Number(candidate.entry) - Number(candidate.stop));
   const riskBudget = equity * Number(candidate.risk_pct ?? candidate.riskPct);
   if (!Number.isFinite(equity) || equity <= 0) return { ok: false, error: "current IBKR net liquidation value required" };
+  if (!Number.isFinite(positionValue) || positionValue > equity * maxPositionWeight + 0.01) {
+    return { ok: false, error: "order quantity exceeds the validated position-value limit" };
+  }
   if (!Number.isFinite(stopRisk) || stopRisk > riskBudget + 0.01) {
     return { ok: false, error: "order quantity exceeds the validated research risk budget" };
   }

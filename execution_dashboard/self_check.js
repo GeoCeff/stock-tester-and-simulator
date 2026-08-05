@@ -89,6 +89,7 @@ assert.equal(validateModelPack(modelPack).ok, true);
 assert.equal(validateModelPack({ ...modelPack, universe: modelPack.universe.slice(1) }).ok, false);
 assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SWING_5D: { ...modelStyle, enabled: true, stop_atr: 2, target_r: 2, risk_pct: 0.02 } } }).ok, false);
 assert.equal(validateModelPack({ ...modelPack, styles: { ...modelPack.styles, SWING_5D: { ...modelStyle, enabled: true, risk_pct: 2 } } }).ok, false);
+assert.equal(validateModelPack({ ...modelPack, symbol_overrides: { AAPL: { max_position_weight: 0.06 } } }).ok, false);
 const researchAgent = {
   schema_version: 1,
   created_at: "2026-07-25T00:00:00Z",
@@ -209,6 +210,7 @@ assert.equal(validateResearchOrder(
   validationNow
 ).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order, index) => index === 2 ? { ...order, auxPrice: 195 } : order) }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
+assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, quantity: 26 })) }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, quantity: 51 })) }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder({ ...researchOrder, orders: researchOrder.orders.map((order) => ({ ...order, tif: "IOC" })) }, validatedAgent, approvedModelPack, 100000, validationNow).ok, false);
 assert.equal(validateResearchOrder(researchOrder, validatedAgent, approvedModelPack, NaN, validationNow).ok, false);
