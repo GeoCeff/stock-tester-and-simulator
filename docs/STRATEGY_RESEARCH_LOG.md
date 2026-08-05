@@ -1,5 +1,13 @@
 # Strategy Research Log
 
+## 2026-08-05 — Pre-live trust and unattended-run audit
+
+- Security mistake found: the localhost execution server granted wildcard CORS and did not validate Host or Origin, allowing an unrelated browser origin to reach local API routes. The shared HTTP boundary now rejects foreign hosts and origins before routing and emits no wildcard permission.
+- Risk mistake found: client sizing used a 5% maximum position value, but the server only recomputed stop risk and allowed model overrides up to 10%. The server now rejects overrides above 5% and independently caps submitted notional against current IBKR net liquidation.
+- Automation mistakes found: one-shot research runs bypassed the watcher lock, the Windows task launched an at-logon process that slept indefinitely, and unchanged completed-session coverage could still create provider-jitter monitoring records. Every invocation now shares the lock, unchanged common coverage exits before evidence writes, and the task is a bounded daily one-shot at 06:00 Manila with catch-up while signed in.
+
+Decision: retain the frozen strategy and evidence rules; fix only the trust, sizing, and scheduling controls around them.
+
 ## 2026-08-04 — Independent exact-plan evidence lanes
 
 - Real-data preflight advanced the fixed 20-stock universe plus SPY from 2026-07-31 through the completed 2026-08-03 session. The unchanged frozen `SWING_20D / low_vol_trend` run used Yahoo data, retained snapshot `ccfb1aa9c…c344f`, exposed no final holdout, published no actionable entries, and left paper evidence at 0/30.

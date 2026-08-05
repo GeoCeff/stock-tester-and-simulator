@@ -48,12 +48,15 @@ Or keep it running once per day:
 .\.venv\Scripts\python.exe .\run_research_agent.py --watch-minutes 1440
 ```
 
-To make that daily loop survive sign-out and Windows restarts, register it as
-a per-user scheduled task:
+For a lower-overhead daily run, register the per-user scheduled task:
 
 ```powershell
 .\research_agent_task.ps1
 ```
+
+The task runs once at 06:00 local time, after the completed New York session.
+It wakes the computer and catches up when a signed-in session becomes available;
+an interactive task cannot fetch market data while the user is signed out.
 
 The agent:
 
@@ -67,6 +70,10 @@ The agent:
 8. advances exact-plan real-data paper and shadow ledgers without applying a later run's cost assumption to older positions;
 9. refreshes the existing news gate for actionable candidates without requiring the browser to be open;
 10. records compact run lessons in `execution_dashboard/data/research_history.jsonl`.
+
+Every invocation shares one process lock. A normal run exits before evaluation
+or evidence writes unless common completed-session coverage advances across the
+fixed universe; `--preflight-only` remains available for non-mutating data checks.
 
 Run `python run_research_agent.py --preflight-only` to fetch, validate, and fingerprint the exact real-data snapshot without evaluating a strategy, exposing a holdout, refreshing news, publishing a result, advancing a ledger, or writing research history.
 
